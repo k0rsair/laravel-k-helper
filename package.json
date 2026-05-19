@@ -1,0 +1,114 @@
+{
+  "name": "laravel-aware-vscode",
+  "displayName": "Laravel Aware",
+  "description": "Laravel-aware completions and navigation for VS Code.",
+  "version": "0.10.0",
+  "publisher": "local-dev",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=20.0.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:php",
+    "onLanguage:blade",
+    "onCommand:laravelAware.reindex",
+    "onCommand:laravelAware.showIndexStatus",
+    "onCommand:laravelAware.openOutput"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "laravelAware.reindex",
+        "title": "Laravel Aware: Reindex Workspace"
+      },
+      {
+        "command": "laravelAware.showIndexStatus",
+        "title": "Laravel Aware: Show Index Status"
+      },
+      {
+        "command": "laravelAware.openOutput",
+        "title": "Laravel Aware: Open Output"
+      },
+      {
+        "command": "laravelAware.openRouteReference",
+        "title": "Laravel Aware: Open Route Reference"
+      }
+    ],
+    "configuration": {
+      "title": "Laravel Aware",
+      "properties": {
+        "laravelAware.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Laravel-aware indexing and providers."
+        },
+        "laravelAware.projectRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Laravel project root relative to the workspace folder."
+        },
+        "laravelAware.logLevel": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "debug",
+          "description": "Minimum log level for Laravel Aware output."
+        },
+        "laravelAware.index.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "vendor/**",
+            "node_modules/**",
+            "storage/**",
+            "bootstrap/cache/**"
+          ],
+          "description": "Glob patterns excluded from Laravel indexing."
+        },
+        "laravelAware.laravelDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Alias for projectRoot, retained for explicit Laravel subdirectory configuration."
+        },
+        "laravelAware.ideJson.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable ide.json custom completion rules when implemented."
+        },
+        "laravelAware.modules.mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "auto",
+            "nwidart"
+          ],
+          "default": "off",
+          "description": "Laravel module indexing mode."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "check": "npm run build && npm test",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.6"
+  }
+}

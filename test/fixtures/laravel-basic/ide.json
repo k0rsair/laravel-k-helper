@@ -1,0 +1,64 @@
+{
+  "completions": [
+    {
+      "function": "custom_route_target",
+      "parameter": 0,
+      "kind": "routeName"
+    },
+    {
+      "function": "custom_disk",
+      "parameter": 1,
+      "kind": "filesystemDisk"
+    },
+    {
+      "function": "custom_mode",
+      "parameter": 0,
+      "kind": "staticStrings",
+      "values": ["draft", "published", "archived"]
+    },
+    {
+      "method": "customMethod",
+      "parameter": 0,
+      "kind": "viewName"
+    },
+    {
+      "method": "CustomFacade::target",
+      "parameter": 0,
+      "kind": "configKey"
+    },
+    {
+      "constructor": "App\\Support\\CustomTarget",
+      "parameter": 0,
+      "kind": "translationKey"
+    },
+    {
+      "arrayKey": "*",
+      "kind": "staticStrings",
+      "values": ["driver", "queue", "connection"]
+    },
+    {
+      "arrayValue": "driver",
+      "kind": "filesystemDisk"
+    },
+    {
+      "function": "laravel_only",
+      "parameter": 0,
+      "kind": "routeName",
+      "package": "laravel/framework",
+      "version": "^11.0"
+    },
+    {
+      "function": "future_laravel_only",
+      "parameter": 0,
+      "kind": "routeName",
+      "package": "laravel/framework",
+      "version": "^12.0"
+    },
+    {
+      "function": "missing_package",
+      "parameter": 0,
+      "kind": "routeName",
+      "package": "vendor/missing"
+    }
+  ]
+}

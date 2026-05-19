@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.vscode-test/
+coverage/
+*.vsix
+.env
+/.codex
+/.aif-actory
+.ai-factory.json
+.vscodeignore
