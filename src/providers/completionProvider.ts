@@ -1,5 +1,13 @@
 import * as vscode from "vscode";
-import { resolveBladeComponentPrefix, resolveIdeJsonStringContext, resolveStringContext } from "../context/completionContext";
+import {
+  resolveBladeComponentPrefix,
+  resolveEloquentCastTypeContext,
+  resolveEloquentModelAttributeContext,
+  resolveEloquentRelationConstraintContext,
+  resolveIdeJsonStringContext,
+  resolveLivewireComponentPrefix,
+  resolveStringContext,
+} from "../context/completionContext";
 import type { LaravelIndex } from "../indexer";
 import type { Logger } from "../logging/logger";
 
@@ -19,6 +27,7 @@ export class LaravelCompletionProvider implements vscode.CompletionItemProvider 
     }
 
     const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
+    const documentPrefix = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
 
     if (document.languageId === "blade") {
       const componentContext = resolveBladeComponentPrefix(linePrefix);
@@ -38,9 +47,32 @@ export class LaravelCompletionProvider implements vscode.CompletionItemProvider 
         });
         return items;
       }
+
+      const livewireContext = resolveLivewireComponentPrefix(linePrefix);
+      if (livewireContext) {
+        const items = index
+          .all("livewire-component")
+          .filter((item) => item.key.startsWith(livewireContext.prefix))
+          .map((item) => {
+            const completion = new vscode.CompletionItem(item.key, vscode.CompletionItemKind.Method);
+            completion.detail = item.detail ?? "Livewire component";
+            completion.range = new vscode.Range(position.line, livewireContext.start, position.line, position.character);
+            return completion;
+          });
+        this.logger.debug("[LaravelCompletionProvider.provide] livewire tags", {
+          prefix: livewireContext.prefix,
+          count: items.length,
+        });
+        return items;
+      }
     }
 
-    const stringContext = resolveStringContext(linePrefix, document.languageId);
+    const stringContext =
+      document.languageId === "php"
+        ? resolveEloquentCastTypeContext(documentPrefix, linePrefix) ??
+          resolveEloquentModelAttributeContext(documentPrefix, linePrefix) ??
+          resolveStringContext(linePrefix, document.languageId)
+        : resolveStringContext(linePrefix, document.languageId);
     if (!stringContext) {
       const ideJsonContext = resolveIdeJsonStringContext(linePrefix);
       const rule = ideJsonContext
@@ -75,25 +107,50 @@ export class LaravelCompletionProvider implements vscode.CompletionItemProvider 
       return items;
     }
 
+    const relationConstraintContext =
+      stringContext.kind === "eloquent-relation" && !stringContext.modelClass
+        ? resolveEloquentRelationConstraintContext(
+            document.getText(new vscode.Range(new vscode.Position(0, 0), position)),
+            linePrefix,
+          )
+        : undefined;
+
     const indexedItems =
       stringContext.kind === "route-action"
-        ? index.routeActionCompletions(document.uri.fsPath, document.offsetAt(position), stringContext.prefix)
+        ? index.routeActionCompletions(document.uri.fsPath, document.offsetAt(position), stringContext.prefix, stringContext.controllerClass)
         : stringContext.kind === "eloquent-field"
-          ? index.eloquentFieldCompletions(document.uri.fsPath, stringContext.prefix, stringContext.modelClass)
+          ? stringContext.castAttribute
+            ? index.eloquentCastTypeCompletions(document.uri.fsPath, stringContext.prefix, stringContext.castAttribute, stringContext.modelClass)
+            : index.eloquentFieldCompletions(document.uri.fsPath, stringContext.prefix, stringContext.modelClass)
           : stringContext.kind === "eloquent-relation"
             ? index.eloquentRelationCompletions(
                 document.uri.fsPath,
                 stringContext.prefix,
-                stringContext.modelClass,
-                stringContext.relationPath,
+                stringContext.modelClass ?? relationConstraintContext?.modelClass,
+                stringContext.modelClass
+                  ? stringContext.relationPath
+                  : [...(relationConstraintContext?.relationPath ?? []), ...(stringContext.relationPath ?? [])],
               )
             : stringContext.kind === "database-column"
               ? index.databaseColumnCompletions(stringContext.prefix, stringContext.table)
+              : stringContext.kind === "eloquent-scope"
+                ? index.eloquentScopeCompletions(document.uri.fsPath, stringContext.prefix, stringContext.modelClass)
+                : stringContext.kind === "eloquent-factory-state"
+                  ? index.eloquentFactoryStateCompletions(document.uri.fsPath, stringContext.prefix, stringContext.modelClass)
+                  : stringContext.kind === "filament-resource"
+                    ? index.filamentResourceCompletions(stringContext.prefix)
+                    : stringContext.kind === "nova-resource"
+                      ? index.novaResourceCompletions(stringContext.prefix)
           : index.all(stringContext.kind).filter((item) => item.key.startsWith(stringContext.prefix));
 
     const items = indexedItems
       .map((item) => {
-        const completion = new vscode.CompletionItem(item.key, toCompletionKind(stringContext.kind));
+        const completion = new vscode.CompletionItem(
+          item.label,
+          stringContext.castAttribute ? vscode.CompletionItemKind.Value : toCompletionKind(stringContext.kind),
+        );
+        completion.insertText =
+          stringContext.kind === "filament-resource" || stringContext.kind === "nova-resource" ? `\\${item.key}::class` : item.key;
         completion.detail = item.detail ?? `Laravel ${stringContext.kind}`;
         completion.range = new vscode.Range(position.line, stringContext.rangeStart, position.line, stringContext.rangeEnd);
         completion.sortText = item.key;
@@ -129,6 +186,8 @@ function toCompletionKind(kind: string): vscode.CompletionItemKind {
       return vscode.CompletionItemKind.Keyword;
     case "request-field":
       return vscode.CompletionItemKind.Field;
+    case "route-middleware":
+      return vscode.CompletionItemKind.Value;
     case "controller-method":
       return vscode.CompletionItemKind.Method;
     case "route-action":
@@ -144,6 +203,15 @@ function toCompletionKind(kind: string): vscode.CompletionItemKind {
       return vscode.CompletionItemKind.Field;
     case "eloquent-relation":
       return vscode.CompletionItemKind.Method;
+    case "eloquent-scope":
+    case "eloquent-factory-state":
+    case "livewire-component":
+      return vscode.CompletionItemKind.Method;
+    case "inertia-page":
+      return vscode.CompletionItemKind.File;
+    case "filament-resource":
+    case "nova-resource":
+      return vscode.CompletionItemKind.Class;
     default:
       return vscode.CompletionItemKind.Text;
   }

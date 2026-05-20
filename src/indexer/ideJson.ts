@@ -17,28 +17,25 @@ const SUPPORTED_KINDS = new Set<IdeJsonCompletionKind>([
 export async function scanIdeJsonRules(projectRoot: string, logger: Logger): Promise<IdeJsonCompletionRule[]> {
   const file = path.join(projectRoot, "ide.json");
   const text = await readTextFile(file);
-  if (!text) {
-    logger.debug("[LaravelIndex.scanIdeJsonRules] ide.json not found", { file });
-    return [];
-  }
-
-  let payload: unknown;
-  try {
-    payload = JSON.parse(text);
-  } catch (error) {
-    logger.warn("[LaravelIndex.scanIdeJsonRules] invalid JSON", {
-      file,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return [];
-  }
-
   const packages = await readComposerPackages(projectRoot);
+  const rootRules = text ? normalizeIdeJsonRules(parseIdeJsonPayload(text, file, logger)) : [];
+  if (!text) {
+    logger.debug("[LaravelIndex.scanIdeJsonRules] root ide.json not found", { file });
+  }
+
+  const packageRules = await scanPackageIdeJsonRules(projectRoot, packages, logger);
   const presetRules = IDE_JSON_PACKAGE_PRESETS
     .filter((preset) => packages.has(preset.package))
     .flatMap((preset) => preset.rules);
-  const rules = [...normalizeIdeJsonRules(payload), ...presetRules].filter((rule) => packageRuleMatches(rule, packages));
-  logger.debug("[LaravelIndex.scanIdeJsonRules] completed", { file, items: rules.length, packages: packages.size });
+  const rules = [...rootRules, ...packageRules, ...presetRules].filter((rule) => packageRuleMatches(rule, packages));
+  logger.debug("[LaravelIndex.scanIdeJsonRules] completed", {
+    file,
+    rootRules: rootRules.length,
+    packageRules: packageRules.length,
+    presetRules: presetRules.length,
+    items: rules.length,
+    packages: packages.size,
+  });
   return rules;
 }
 
@@ -160,6 +157,65 @@ async function readComposerPackages(projectRoot: string): Promise<Map<string, st
     return new Map(Object.entries({ ...(composer.require ?? {}), ...(composer["require-dev"] ?? {}) }));
   } catch {
     return new Map();
+  }
+}
+
+async function scanPackageIdeJsonRules(
+  projectRoot: string,
+  packages: Map<string, string>,
+  logger: Logger,
+): Promise<IdeJsonCompletionRule[]> {
+  const rules: IdeJsonCompletionRule[] = [];
+
+  for (const packageName of packages.keys()) {
+    for (const file of packageIdeJsonFiles(projectRoot, packageName)) {
+      const text = await readTextFile(file);
+      if (!text) {
+        continue;
+      }
+
+      const payload = parseIdeJsonPayload(text, file, logger);
+      const packageRules = normalizeIdeJsonRules(payload).map((rule) => ({
+        ...rule,
+        package: rule.package ?? packageName,
+      }));
+      rules.push(...packageRules);
+      logger.debug("[LaravelIndex.scanPackageIdeJsonRules] package ide.json loaded", {
+        package: packageName,
+        file,
+        rules: packageRules.length,
+      });
+    }
+  }
+
+  return rules;
+}
+
+function packageIdeJsonFiles(projectRoot: string, packageName: string): string[] {
+  const [vendor, name] = packageName.split("/");
+  if (!vendor || !name) {
+    return [];
+  }
+
+  const packageRoot = path.join(projectRoot, "vendor", vendor, name);
+  return [
+    path.join(packageRoot, "ide.json"),
+    path.join(packageRoot, "laravel-k-helper.json"),
+    path.join(packageRoot, ".laravel-k-helper", "ide.json"),
+    path.join(packageRoot, "laravel-assist.json"),
+    path.join(packageRoot, ".laravel-assist", "ide.json"),
+  ];
+}
+
+function parseIdeJsonPayload(text: string, file: string, logger: Logger): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    logger.warn("[LaravelIndex.scanIdeJsonRules] invalid JSON", {
+      file,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
   }
 }
 

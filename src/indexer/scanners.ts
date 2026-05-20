@@ -12,6 +12,27 @@ export interface EloquentIndex {
   models: IndexedItem[];
   fields: IndexedItem[];
   relations: IndexedItem[];
+  scopes: IndexedItem[];
+  factoryStates: IndexedItem[];
+}
+
+export interface EcosystemIndex {
+  livewireComponents: IndexedItem[];
+  inertiaPages: IndexedItem[];
+  filamentResources: IndexedItem[];
+  novaResources: IndexedItem[];
+}
+
+interface PhpClassInfo {
+  file: string;
+  text: string;
+  namespace: string;
+  className: string;
+  classIndex: number;
+  classNameIndex: number;
+  fqn: string;
+  extendsClass?: string;
+  uses: Map<string, string>;
 }
 
 const BUILT_IN_VALIDATION_RULES = [
@@ -212,8 +233,9 @@ export async function scanDatabaseSchema(projectRoot: string, logger: Logger): P
       for (const column of scanMigrationColumns(table.body, table.bodyOffset)) {
         columns.push({
           ...createItem("database-column", column.name, file, text, column.index),
-          detail: `${table.name} column`,
+          detail: `${table.name} column (${column.type})`,
           table: table.name,
+          columnType: column.type,
         });
       }
     }
@@ -237,10 +259,14 @@ export async function scanEloquentModels(
   databaseColumns: IndexedItem[],
 ): Promise<EloquentIndex> {
   const appFiles = await walkFiles(path.join(projectRoot, "app"), (file) => file.endsWith(".php"));
+  const phpClasses: PhpClassInfo[] = [];
   const models: IndexedItem[] = [];
   const fields: IndexedItem[] = [];
   const relations: IndexedItem[] = [];
+  const scopes: IndexedItem[] = [];
+  const factoryStates: IndexedItem[] = [];
   const columnsByTable = new Map<string, IndexedItem[]>();
+  const composerPackages = await readComposerPackageNames(projectRoot);
 
   for (const column of databaseColumns) {
     if (!column.table) {
@@ -251,50 +277,79 @@ export async function scanEloquentModels(
 
   for (const file of appFiles) {
     const text = await readTextFile(file);
-    if (!text || !isEloquentModel(file, projectRoot, text)) {
+    if (!text) {
+      continue;
+    }
+    const classInfo = scanPhpClassInfo(file, text);
+    if (classInfo) {
+      phpClasses.push(classInfo);
+    }
+  }
+
+  const classesByName = new Map(phpClasses.map((phpClass) => [phpClass.fqn, phpClass]));
+  const eloquentClassCache = new Map<string, boolean>();
+
+  logger.debug("[FIX:eloquent-inheritance] resolved PHP classes for Eloquent scan", {
+    files: appFiles.length,
+    classes: phpClasses.length,
+  });
+
+  for (const classInfo of phpClasses) {
+    if (!isEloquentClassInfo(classInfo, projectRoot, classesByName, eloquentClassCache)) {
       continue;
     }
 
-    const namespace = /namespace\s+([^;]+);/.exec(text)?.[1];
-    const classMatch = /class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+([A-Za-z_\\][A-Za-z0-9_\\]*)/.exec(text);
-    const className = classMatch?.[1];
-    if (!namespace || !className || classMatch.index === undefined) {
-      continue;
-    }
-
-    const modelClass = `${namespace}\\${className}`;
-    const table = explicitModelTable(text) ?? inferTableName(className);
+    const modelClass = classInfo.fqn;
+    const table = explicitModelTable(classInfo.text) ?? inferTableName(classInfo.className);
     models.push({
-      ...createItem("eloquent-model", modelClass, file, text, classMatch.index),
+      ...createItem("eloquent-model", modelClass, classInfo.file, classInfo.text, classInfo.classNameIndex),
       detail: table,
       modelClass,
       table,
     });
 
+    const fieldKeys = new Set<string>();
     for (const column of columnsByTable.get(table) ?? []) {
+      fieldKeys.add(column.key);
       fields.push({
         ...column,
         kind: "eloquent-field",
-        detail: `${modelClass} field (${table})`,
+        detail: column.columnType ? `${modelClass} field (${table}, ${column.columnType})` : `${modelClass} field (${table})`,
         modelClass,
         table,
       });
     }
 
-    relations.push(...scanEloquentRelations(text, file, modelClass, namespace, scanUseStatements(text)));
+    for (const castField of scanEloquentCastFields(classInfo.text, classInfo.file, modelClass)) {
+      if (fieldKeys.has(castField.key)) {
+        continue;
+      }
+      fieldKeys.add(castField.key);
+      fields.push(castField);
+    }
+
+    relations.push(...scanEloquentRelations(classInfo.text, classInfo.file, modelClass, classInfo.namespace, classInfo.uses));
+    relations.push(...scanPackageEloquentRelations(classInfo.text, classInfo.file, modelClass, composerPackages));
+    scopes.push(...scanEloquentScopes(classInfo.text, classInfo.file, modelClass));
   }
+
+  factoryStates.push(...(await scanEloquentFactoryStates(projectRoot, logger)));
 
   logger.debug("[LaravelIndex.scanEloquentModels] completed", {
     files: appFiles.length,
     models: models.length,
     fields: fields.length,
     relations: relations.length,
+    scopes: scopes.length,
+    factoryStates: factoryStates.length,
   });
 
   return {
     models: uniqueItems(models),
     fields: uniqueItems(fields),
     relations: uniqueItems(relations),
+    scopes: uniqueItems(scopes),
+    factoryStates: uniqueItems(factoryStates),
   };
 }
 
@@ -382,6 +437,124 @@ export async function scanBladeComponents(projectRoot: string, logger: Logger): 
   return uniqueItems(items);
 }
 
+export async function scanEcosystemItems(projectRoot: string, logger: Logger): Promise<EcosystemIndex> {
+  const livewireComponents = await scanLivewireComponents(projectRoot, logger);
+  const inertiaPages = await scanInertiaPages(projectRoot, logger);
+  const filamentResources = await scanFilamentResources(projectRoot, logger);
+  const novaResources = await scanNovaResources(projectRoot, logger);
+
+  logger.debug("[LaravelIndex.scanEcosystemItems] completed", {
+    livewireComponents: livewireComponents.length,
+    inertiaPages: inertiaPages.length,
+    filamentResources: filamentResources.length,
+    novaResources: novaResources.length,
+  });
+
+  return {
+    livewireComponents,
+    inertiaPages,
+    filamentResources,
+    novaResources,
+  };
+}
+
+async function scanLivewireComponents(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+  const roots = [path.join(projectRoot, "app", "Livewire"), path.join(projectRoot, "app", "Http", "Livewire")];
+  const viewRoot = path.join(projectRoot, "resources", "views", "livewire");
+  const items: IndexedItem[] = [];
+
+  for (const root of roots) {
+    const files = await walkFiles(root, (file) => file.endsWith(".php"));
+    for (const file of files) {
+      const relative = toPosixPath(path.relative(root, file)).replace(/\.php$/, "");
+      const key = relative
+        .split("/")
+        .map((segment) => segment.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase())
+        .join(".");
+      items.push(createItemFromLine("livewire-component", key, file, 0, 0, "Livewire component"));
+    }
+  }
+
+  const viewFiles = await walkFiles(viewRoot, (file) => file.endsWith(".blade.php"));
+  for (const file of viewFiles) {
+    const key = toPosixPath(path.relative(viewRoot, file)).replace(/\.blade\.php$/, "").replace(/\//g, ".");
+    items.push(createItemFromLine("livewire-component", key, file, 0, 0, "Livewire view component"));
+  }
+
+  logger.debug("[LaravelIndex.scanLivewireComponents] completed", { viewFiles: viewFiles.length, items: items.length });
+  return uniqueItems(items);
+}
+
+async function scanInertiaPages(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+  const pagesRoot = path.join(projectRoot, "resources", "js", "Pages");
+  const pageFiles = await walkFiles(pagesRoot, (file) => /\.(vue|jsx|tsx|svelte)$/.test(file));
+  const items = pageFiles.map((file) => {
+    const relative = toPosixPath(path.relative(pagesRoot, file)).replace(/\.(vue|jsx|tsx|svelte)$/, "");
+    return createItemFromLine("inertia-page", relative, file, 0, 0, "Inertia page");
+  });
+
+  logger.debug("[LaravelIndex.scanInertiaPages] completed", { files: pageFiles.length, items: items.length });
+  return uniqueItems(items);
+}
+
+async function scanFilamentResources(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+  const resourcesRoot = path.join(projectRoot, "app", "Filament", "Resources");
+  const resourceFiles = await walkFiles(resourcesRoot, (file) => file.endsWith("Resource.php"));
+  const items: IndexedItem[] = [];
+
+  for (const file of resourceFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+
+    const namespace = /namespace\s+([^;]+);/.exec(text)?.[1];
+    const classMatch = /class\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(text);
+    if (!namespace || !classMatch?.[1] || classMatch.index === undefined) {
+      continue;
+    }
+
+    const resourceClass = `${namespace}\\${classMatch[1]}`;
+    items.push({
+      ...createItem("filament-resource", resourceClass, file, text, classMatch.index),
+      label: classMatch[1],
+      detail: "Filament resource",
+    });
+  }
+
+  logger.debug("[LaravelIndex.scanFilamentResources] completed", { files: resourceFiles.length, items: items.length });
+  return uniqueItems(items);
+}
+
+async function scanNovaResources(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+  const resourcesRoot = path.join(projectRoot, "app", "Nova");
+  const resourceFiles = await walkFiles(resourcesRoot, (file) => file.endsWith(".php"));
+  const items: IndexedItem[] = [];
+
+  for (const file of resourceFiles) {
+    const text = await readTextFile(file);
+    if (!text || !/\bextends\s+(?:\\?Laravel\\Nova\\)?Resource\b/.test(text)) {
+      continue;
+    }
+
+    const namespace = /namespace\s+([^;]+);/.exec(text)?.[1];
+    const classMatch = /class\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(text);
+    if (!namespace || !classMatch?.[1] || classMatch.index === undefined) {
+      continue;
+    }
+
+    const resourceClass = `${namespace}\\${classMatch[1]}`;
+    items.push({
+      ...createItem("nova-resource", resourceClass, file, text, classMatch.index),
+      label: classMatch[1],
+      detail: "Nova resource",
+    });
+  }
+
+  logger.debug("[LaravelIndex.scanNovaResources] completed", { files: resourceFiles.length, items: items.length });
+  return uniqueItems(items);
+}
+
 export async function scanValidationRules(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
   const composerFile = path.join(projectRoot, "composer.json");
   const items = BUILT_IN_VALIDATION_RULES.map((rule) =>
@@ -424,6 +597,50 @@ export async function scanRequestFields(projectRoot: string, logger: Logger): Pr
   }
 
   logger.debug("[LaravelIndex.scanRequestFields] completed", { files: files.length, items: items.length });
+  return uniqueItems(items);
+}
+
+export async function scanRouteMiddleware(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+  const items: IndexedItem[] = [];
+
+  for (const file of [path.join(projectRoot, "app", "Http", "Kernel.php"), path.join(projectRoot, "bootstrap", "app.php")]) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+
+    for (const alias of scanRouteMiddlewareAliases(text)) {
+      items.push({
+        ...createItem("route-middleware", alias.key, file, text, alias.index),
+        detail: alias.middlewareClass ? `Middleware ${alias.middlewareClass}` : "Route middleware",
+        middlewareClass: alias.middlewareClass,
+      });
+    }
+  }
+
+  const referenceFiles = [
+    ...(await walkFiles(path.join(projectRoot, "routes"), (file) => file.endsWith(".php"))),
+    ...(await walkFiles(path.join(projectRoot, "app", "Http", "Controllers"), (file) => file.endsWith(".php"))),
+  ];
+  for (const file of referenceFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+
+    for (const reference of scanRouteMiddlewareReferences(text)) {
+      items.push({
+        ...createItem("route-middleware", reference.key, file, text, reference.index),
+        detail: "Route middleware reference",
+      });
+    }
+  }
+
+  logger.debug("[LaravelIndex.scanRouteMiddleware] completed", {
+    files: referenceFiles.length + 2,
+    items: items.length,
+  });
+
   return uniqueItems(items);
 }
 
@@ -493,6 +710,10 @@ export async function scanRouteActions(
     }
 
     for (const action of scanArrayRouteActions(text, uses)) {
+      items.push(createRouteActionItem(action.method, action.controllerClass, file, text, action.index, methodsByKey));
+    }
+
+    for (const action of scanControllerStringRouteActions(text, uses)) {
       items.push(createRouteActionItem(action.method, action.controllerClass, file, text, action.index, methodsByKey));
     }
 
@@ -615,8 +836,8 @@ function scanMigrationTableBlocks(text: string): Array<{ name: string; index: nu
   return tables;
 }
 
-function scanMigrationColumns(body: string, bodyOffset: number): Array<{ name: string; index: number }> {
-  const columns: Array<{ name: string; index: number }> = [];
+function scanMigrationColumns(body: string, bodyOffset: number): Array<{ name: string; index: number; type: string }> {
+  const columns: Array<{ name: string; index: number; type: string }> = [];
   const columnMethods =
     "bigInteger|binary|boolean|char|date|dateTime|dateTimeTz|decimal|double|enum|float|foreignId|integer|ipAddress|json|jsonb|longText|macAddress|mediumInteger|mediumText|morphs|nullableMorphs|rememberToken|set|smallInteger|string|text|time|timeTz|timestamp|timestampTz|tinyInteger|ulid|uuid|year";
   const namedColumnRegex = new RegExp(`\\$table->(?:${columnMethods})\\(\\s*['"]([A-Za-z0-9_]+)['"]`, "g");
@@ -630,49 +851,163 @@ function scanMigrationColumns(body: string, bodyOffset: number): Array<{ name: s
     const baseIndex = bodyOffset + match.index + methodCall.lastIndexOf(match[1]);
 
     if (methodName === "morphs" || methodName === "nullableMorphs") {
-      columns.push({ name: `${match[1]}_id`, index: baseIndex });
-      columns.push({ name: `${match[1]}_type`, index: baseIndex });
+      columns.push({ name: `${match[1]}_id`, index: baseIndex, type: "unsignedBigInteger" });
+      columns.push({ name: `${match[1]}_type`, index: baseIndex, type: "string" });
       continue;
     }
 
-    columns.push({ name: match[1], index: baseIndex });
+    columns.push({ name: match[1], index: baseIndex, type: methodName ?? "column" });
   }
 
   for (const match of body.matchAll(/\$table->id\(\s*\)/g)) {
     if (match.index !== undefined) {
-      columns.push({ name: "id", index: bodyOffset + match.index });
+      columns.push({ name: "id", index: bodyOffset + match.index, type: "id" });
     }
   }
 
   for (const match of body.matchAll(/\$table->timestamps\(\s*\)/g)) {
     if (match.index !== undefined) {
-      columns.push({ name: "created_at", index: bodyOffset + match.index });
-      columns.push({ name: "updated_at", index: bodyOffset + match.index });
+      columns.push({ name: "created_at", index: bodyOffset + match.index, type: "timestamp" });
+      columns.push({ name: "updated_at", index: bodyOffset + match.index, type: "timestamp" });
     }
   }
 
   for (const match of body.matchAll(/\$table->softDeletes\(\s*\)/g)) {
     if (match.index !== undefined) {
-      columns.push({ name: "deleted_at", index: bodyOffset + match.index });
+      columns.push({ name: "deleted_at", index: bodyOffset + match.index, type: "timestamp" });
     }
   }
 
   for (const match of body.matchAll(/\$table->rememberToken\(\s*\)/g)) {
     if (match.index !== undefined) {
-      columns.push({ name: "remember_token", index: bodyOffset + match.index });
+      columns.push({ name: "remember_token", index: bodyOffset + match.index, type: "string" });
     }
   }
 
   return columns;
 }
 
-function isEloquentModel(file: string, projectRoot: string, text: string): boolean {
+function scanPhpClassInfo(file: string, text: string): PhpClassInfo | undefined {
+  const namespace = /namespace\s+([^;]+);/.exec(text)?.[1];
+  const classMatch = /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+extends\s+([A-Za-z_\\][A-Za-z0-9_\\]*))?/.exec(text);
+  const className = classMatch?.[1];
+  if (!namespace || !className || classMatch.index === undefined) {
+    return undefined;
+  }
+
+  const uses = scanUseStatements(text);
+  return {
+    file,
+    text,
+    namespace,
+    className,
+    classIndex: classMatch.index,
+    classNameIndex: classMatch.index + classMatch[0].indexOf(className),
+    fqn: `${namespace}\\${className}`,
+    extendsClass: classMatch[2] ? resolveExtendsClass(classMatch[2], namespace, uses) : undefined,
+    uses,
+  };
+}
+
+function isEloquentClassInfo(
+  classInfo: PhpClassInfo,
+  projectRoot: string,
+  classesByName: Map<string, PhpClassInfo>,
+  cache: Map<string, boolean>,
+): boolean {
+  const cached = cache.get(classInfo.fqn);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   const modelsRoot = path.join(projectRoot, "app", "Models");
-  if (file.startsWith(modelsRoot + path.sep) && /\bclass\s+[A-Za-z_][A-Za-z0-9_]*\b/.test(text)) {
+  if (classInfo.file.startsWith(modelsRoot + path.sep)) {
+    cache.set(classInfo.fqn, true);
     return true;
   }
 
-  return /\bclass\s+[A-Za-z_][A-Za-z0-9_]*\s+extends\s+(?:\\?Illuminate\\Database\\Eloquent\\Model|Model|Authenticatable)\b/.test(text);
+  if (!classInfo.extendsClass) {
+    cache.set(classInfo.fqn, false);
+    return false;
+  }
+
+  if (isKnownEloquentBaseClass(classInfo.extendsClass)) {
+    cache.set(classInfo.fqn, true);
+    return true;
+  }
+
+  const parent = classesByName.get(classInfo.extendsClass);
+  const inheritsFromEloquent = parent ? isEloquentClassInfo(parent, projectRoot, classesByName, cache) : false;
+  cache.set(classInfo.fqn, inheritsFromEloquent);
+  return inheritsFromEloquent;
+}
+
+function isKnownEloquentBaseClass(className: string): boolean {
+  return (
+    className === "Illuminate\\Database\\Eloquent\\Model" ||
+    className === "Illuminate\\Foundation\\Auth\\User" ||
+    className === "Illuminate\\Foundation\\Auth\\Authenticatable"
+  );
+}
+
+async function scanEloquentFactoryStates(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+  const factoryFiles = await walkFiles(path.join(projectRoot, "database", "factories"), (file) => file.endsWith(".php"));
+  const states: IndexedItem[] = [];
+
+  for (const file of factoryFiles) {
+    const text = await readTextFile(file);
+    if (!text || !/\bclass\s+[A-Za-z_][A-Za-z0-9_]*Factory\s+extends\s+Factory\b/.test(text)) {
+      continue;
+    }
+
+    const uses = scanUseStatements(text);
+    const modelClass = factoryModelClass(text, file, uses);
+    if (!modelClass) {
+      continue;
+    }
+
+    const methodRegex = /\bpublic\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+    for (const match of text.matchAll(methodRegex)) {
+      if (match[1] === undefined || match.index === undefined || isIgnoredFactoryMethod(match[1])) {
+        continue;
+      }
+
+      states.push({
+        ...createItem("eloquent-factory-state", match[1], file, text, match.index + match[0].indexOf(match[1])),
+        detail: `${modelClass} factory state`,
+        modelClass,
+        method: match[1],
+      });
+    }
+  }
+
+  logger.debug("[LaravelIndex.scanEloquentFactoryStates] completed", {
+    files: factoryFiles.length,
+    items: states.length,
+  });
+
+  return states;
+}
+
+function factoryModelClass(text: string, file: string, uses: Map<string, string>): string | undefined {
+  const propertyModel = /\bprotected\s+\$model\s*=\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::class\s*;/.exec(text)?.[1];
+  if (propertyModel) {
+    if (propertyModel.includes("\\")) {
+      return propertyModel;
+    }
+    return uses.get(propertyModel) ?? `App\\Models\\${propertyModel}`;
+  }
+
+  const factoryClass = path.basename(file, ".php");
+  if (!factoryClass.endsWith("Factory")) {
+    return undefined;
+  }
+
+  return `App\\Models\\${factoryClass.slice(0, -"Factory".length)}`;
+}
+
+function isIgnoredFactoryMethod(method: string): boolean {
+  return method === "definition" || method === "configure";
 }
 
 function scanEloquentRelations(
@@ -715,12 +1050,155 @@ function scanEloquentRelations(
   return relations;
 }
 
+function scanPackageEloquentRelations(
+  text: string,
+  file: string,
+  modelClass: string,
+  composerPackages: Set<string>,
+): IndexedItem[] {
+  const relations: IndexedItem[] = [];
+
+  if (composerPackages.has("laravel/sanctum") && /\buse\s+(?:\\?Laravel\\Sanctum\\)?HasApiTokens\s*;/.test(text)) {
+    const match = /\buse\s+(?:\\?Laravel\\Sanctum\\)?HasApiTokens\s*;/.exec(text);
+    relations.push({
+      ...createItem("eloquent-relation", "tokens", file, text, match?.index ?? 0),
+      detail: `${modelClass} Laravel Sanctum tokens relation`,
+      modelClass,
+      relatedModelClass: "Laravel\\Sanctum\\PersonalAccessToken",
+      method: "tokens",
+    });
+  }
+
+  return relations;
+}
+
+function scanEloquentScopes(text: string, file: string, modelClass: string): IndexedItem[] {
+  const scopes: IndexedItem[] = [];
+  const scopeRegex = /\bpublic\s+function\s+scope([A-Z][A-Za-z0-9_]*)\s*\(/g;
+
+  for (const match of text.matchAll(scopeRegex)) {
+    if (match[1] === undefined || match.index === undefined) {
+      continue;
+    }
+
+    const scopeName = match[1].charAt(0).toLowerCase() + match[1].slice(1);
+    scopes.push({
+      ...createItem("eloquent-scope", scopeName, file, text, match.index + match[0].indexOf(match[1])),
+      detail: `${modelClass} scope`,
+      modelClass,
+      method: `scope${match[1]}`,
+    });
+  }
+
+  return scopes;
+}
+
+function scanEloquentCastFields(text: string, file: string, modelClass: string): IndexedItem[] {
+  const fields: IndexedItem[] = [];
+
+  for (const block of scanEloquentCastBlocks(text)) {
+    const keys = scanPhpArrayKeys(block.body, block.offset);
+    for (const key of keys) {
+      fields.push({
+        ...createItem("eloquent-field", key.value, file, text, key.index),
+        detail: `${modelClass} cast attribute`,
+        modelClass,
+      });
+    }
+  }
+
+  return fields;
+}
+
+function scanEloquentCastBlocks(text: string): Array<{ body: string; offset: number }> {
+  const blocks: Array<{ body: string; offset: number }> = [];
+  const propertyRegex = /\bprotected\s+\$casts\s*=\s*\[/g;
+
+  for (const match of text.matchAll(propertyRegex)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    const openBracket = text.indexOf("[", match.index);
+    const closeBracket = findMatchingSquareBracket(text, openBracket, text.length);
+    if (openBracket < 0 || closeBracket < 0) {
+      continue;
+    }
+    blocks.push({
+      body: text.slice(openBracket + 1, closeBracket),
+      offset: openBracket + 1,
+    });
+  }
+
+  const methodRegex = /\b(?:protected|public)\s+function\s+casts\s*\([^)]*\)\s*(?::\s*[^{]+)?\{/g;
+  for (const match of text.matchAll(methodRegex)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    const openBrace = match.index + match[0].length - 1;
+    const closeBrace = findMatchingBrace(text, openBrace, text.length);
+    if (closeBrace < 0) {
+      continue;
+    }
+    const body = text.slice(openBrace + 1, closeBrace);
+    const returnMatch = /return\s*\[/.exec(body);
+    if (returnMatch?.index === undefined) {
+      continue;
+    }
+    const openBracket = openBrace + 1 + body.indexOf("[", returnMatch.index);
+    const closeBracket = findMatchingSquareBracket(text, openBracket, closeBrace);
+    if (openBracket < 0 || closeBracket < 0) {
+      continue;
+    }
+    blocks.push({
+      body: text.slice(openBracket + 1, closeBracket),
+      offset: openBracket + 1,
+    });
+  }
+
+  return blocks;
+}
+
+function scanPhpArrayKeys(text: string, offset: number): Array<{ value: string; index: number }> {
+  const keys: Array<{ value: string; index: number }> = [];
+  const keyRegex = /['"]([A-Za-z0-9_.-]+)['"]\s*=>/g;
+
+  for (const match of text.matchAll(keyRegex)) {
+    if (match[1] === undefined || match.index === undefined) {
+      continue;
+    }
+    keys.push({
+      value: match[1],
+      index: offset + match.index + match[0].indexOf(match[1]),
+    });
+  }
+
+  return keys;
+}
+
 function resolveModelClass(className: string, namespace: string, uses: Map<string, string>): string {
   const normalized = className.replace(/^\\/, "");
   if (normalized.includes("\\")) {
     return normalized;
   }
   return uses.get(normalized) ?? `${namespace}\\${normalized}`;
+}
+
+function resolveExtendsClass(className: string, namespace: string, uses: Map<string, string>): string {
+  const normalized = className.replace(/^\\/, "");
+  if (normalized.includes("\\")) {
+    return normalized;
+  }
+  const imported = uses.get(normalized);
+  if (imported) {
+    return imported;
+  }
+  if (normalized === "Model") {
+    return "Illuminate\\Database\\Eloquent\\Model";
+  }
+  if (normalized === "Authenticatable") {
+    return "Illuminate\\Foundation\\Auth\\Authenticatable";
+  }
+  return `${namespace}\\${normalized}`;
 }
 
 function explicitModelTable(text: string): string | undefined {
@@ -968,6 +1446,27 @@ function scanArrayRouteActions(
   return actions;
 }
 
+function scanControllerStringRouteActions(
+  text: string,
+  uses: Map<string, string>,
+): Array<{ controllerClass: string; method: string; index: number }> {
+  const actions: Array<{ controllerClass: string; method: string; index: number }> = [];
+  const regex =
+    /Route::(?:get|post|put|patch|delete|options|any|match)\s*\(\s*(?:\[[^\]]+\]\s*,\s*)?['"][^'"]*['"]\s*,\s*['"]\\?([A-Za-z_][A-Za-z0-9_\\]*)@([A-Za-z_][A-Za-z0-9_]*)['"]/g;
+
+  for (const match of text.matchAll(regex)) {
+    if (match[1] !== undefined && match[2] !== undefined && match.index !== undefined) {
+      actions.push({
+        controllerClass: resolveControllerClass(match[1], uses),
+        method: match[2],
+        index: match.index + match[0].lastIndexOf(match[2]),
+      });
+    }
+  }
+
+  return actions;
+}
+
 function scanInvokableRouteActions(
   text: string,
   uses: Map<string, string>,
@@ -1050,6 +1549,94 @@ function scanValidationFieldKeys(text: string): Array<{ value: string; index: nu
   return matches;
 }
 
+function scanRouteMiddlewareAliases(text: string): Array<{ key: string; index: number; middlewareClass?: string }> {
+  const aliases: Array<{ key: string; index: number; middlewareClass?: string }> = [];
+
+  for (const block of scanRouteMiddlewareAliasBlocks(text)) {
+    const aliasRegex = /['"]([A-Za-z0-9_.-]+)['"]\s*=>\s*(?:\\?([A-Za-z_][A-Za-z0-9_\\]*)::class)?/g;
+    for (const match of block.body.matchAll(aliasRegex)) {
+      if (match[1] === undefined || match.index === undefined) {
+        continue;
+      }
+      aliases.push({
+        key: match[1],
+        index: block.offset + match.index + match[0].indexOf(match[1]),
+        middlewareClass: match[2],
+      });
+    }
+  }
+
+  return aliases;
+}
+
+function scanRouteMiddlewareAliasBlocks(text: string): Array<{ body: string; offset: number }> {
+  const blocks: Array<{ body: string; offset: number }> = [];
+  const propertyRegex = /\bprotected\s+\$(?:routeMiddleware|middlewareAliases)\s*=\s*\[/g;
+
+  for (const match of text.matchAll(propertyRegex)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    const openBracket = text.indexOf("[", match.index);
+    const closeBracket = findMatchingSquareBracket(text, openBracket, text.length);
+    if (openBracket < 0 || closeBracket < 0) {
+      continue;
+    }
+    blocks.push({
+      body: text.slice(openBracket + 1, closeBracket),
+      offset: openBracket + 1,
+    });
+  }
+
+  const aliasRegex = /->alias\(\s*\[/g;
+  for (const match of text.matchAll(aliasRegex)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    const openBracket = text.indexOf("[", match.index);
+    const closeBracket = findMatchingSquareBracket(text, openBracket, text.length);
+    if (openBracket < 0 || closeBracket < 0) {
+      continue;
+    }
+    blocks.push({
+      body: text.slice(openBracket + 1, closeBracket),
+      offset: openBracket + 1,
+    });
+  }
+
+  return blocks;
+}
+
+function scanRouteMiddlewareReferences(text: string): Array<{ key: string; index: number }> {
+  const references: Array<{ key: string; index: number }> = [];
+  const middlewareCallRegex = /(?:Route::|->|\$this->)middleware\s*\(([\s\S]*?)\)/g;
+
+  for (const match of text.matchAll(middlewareCallRegex)) {
+    if (match[1] === undefined || match.index === undefined) {
+      continue;
+    }
+
+    const argsOffset = match.index + match[0].indexOf(match[1]);
+    const stringRegex = /['"]([A-Za-z0-9_.:-]+)['"]/g;
+    for (const stringMatch of match[1].matchAll(stringRegex)) {
+      if (stringMatch[1] === undefined || stringMatch.index === undefined) {
+        continue;
+      }
+      const key = middlewareNameFromReference(stringMatch[1]);
+      references.push({
+        key,
+        index: argsOffset + stringMatch.index + stringMatch[0].indexOf(stringMatch[1]),
+      });
+    }
+  }
+
+  return references;
+}
+
+function middlewareNameFromReference(value: string): string {
+  return value.split(":")[0] ?? value;
+}
+
 function scanRegex(text: string, regex: RegExp): Array<{ value: string; index: number }> {
   const matches: Array<{ value: string; index: number }> = [];
   for (const match of text.matchAll(regex)) {
@@ -1058,6 +1645,20 @@ function scanRegex(text: string, regex: RegExp): Array<{ value: string; index: n
     }
   }
   return matches;
+}
+
+async function readComposerPackageNames(projectRoot: string): Promise<Set<string>> {
+  const text = await readTextFile(path.join(projectRoot, "composer.json"));
+  if (!text) {
+    return new Set();
+  }
+
+  try {
+    const composer = JSON.parse(text) as { require?: Record<string, string>; "require-dev"?: Record<string, string> };
+    return new Set([...Object.keys(composer.require ?? {}), ...Object.keys(composer["require-dev"] ?? {})]);
+  } catch {
+    return new Set();
+  }
 }
 
 function createItem(kind: LaravelIndexKind, key: string, file: string, text: string, index: number): IndexedItem {
@@ -1099,7 +1700,15 @@ function uniqueItems(items: IndexedItem[]): IndexedItem[] {
   const unique: IndexedItem[] = [];
 
   for (const item of items) {
-    const key = `${item.kind}:${item.key}:${item.source.file}:${item.routeSource?.file ?? ""}:${item.routeSource?.offset ?? ""}`;
+    const key = [
+      item.kind,
+      item.key,
+      item.modelClass ?? "",
+      item.table ?? "",
+      item.source.file,
+      item.routeSource?.file ?? "",
+      item.routeSource?.offset ?? "",
+    ].join(":");
     if (!seen.has(key)) {
       seen.add(key);
       unique.push(item);

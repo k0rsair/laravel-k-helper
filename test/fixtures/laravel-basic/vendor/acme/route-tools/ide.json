@@ -1,0 +1,15 @@
+{
+  "completions": [
+    {
+      "function": "package_route_target",
+      "parameter": 0,
+      "kind": "routeName"
+    },
+    {
+      "function": "package_mode",
+      "parameter": 0,
+      "kind": "staticStrings",
+      "values": ["sync", "async"]
+    }
+  ]
+}

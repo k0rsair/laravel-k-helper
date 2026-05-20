@@ -1,7 +1,9 @@
 {
   "require": {
     "php": "^8.2",
-    "laravel/framework": "^11.0"
+    "laravel/framework": "^11.0",
+    "laravel/sanctum": "^4.0",
+    "acme/route-tools": "^1.0"
   },
   "require-dev": {
     "laravel/pint": "^1.0"

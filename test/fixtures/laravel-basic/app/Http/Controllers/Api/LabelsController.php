@@ -4,6 +4,11 @@ namespace App\Http\Controllers\Api;
 
 class LabelsController
 {
+    public function __construct()
+    {
+        $this->middleware('auth');
+    }
+
     public function getLabel($projectDelivery, $article)
     {
         return response()->json([]);
@@ -30,6 +35,11 @@ class LabelsController
     }
 
     public function arrayLabel()
+    {
+        return response()->json([]);
+    }
+
+    public function legacyLabel()
     {
         return response()->json([]);
     }

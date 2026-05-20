@@ -1,11 +1,12 @@
 {
-  "name": "laravel-assist",
-  "displayName": "Laravel Assist",
-  "description": "Laravel-aware completions and navigation for VS Code.",
-  "version": "0.10.0",
+  "name": "laravel-k-helper",
+  "displayName": "Laravel K Helper",
+  "description": "Laravel helpers for Cursor and VS Code.",
+  "version": "0.10.1",
   "publisher": "local-dev",
   "icon": "assets/icon.png",
   "license": "MIT",
+  "preview": true,
   "engines": {
     "vscode": "^1.90.0",
     "node": ">=20.0.0"
@@ -14,47 +15,62 @@
     "Programming Languages",
     "Other"
   ],
+  "keywords": [
+    "laravel",
+    "php",
+    "eloquent",
+    "blade",
+    "artisan",
+    "autocomplete",
+    "completion",
+    "navigation"
+  ],
   "activationEvents": [
     "onLanguage:php",
     "onLanguage:blade",
-    "onCommand:laravelAware.reindex",
-    "onCommand:laravelAware.showIndexStatus",
-    "onCommand:laravelAware.openOutput"
+    "onCommand:laravelKHelper.reindex",
+    "onCommand:laravelKHelper.showIndexStatus",
+    "onCommand:laravelKHelper.openOutput",
+    "onCommand:laravelKHelper.generateArtifactPreview"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "laravelAware.reindex",
-        "title": "Laravel Assist: Reindex Workspace"
+        "command": "laravelKHelper.reindex",
+        "title": "Laravel K Helper: Reindex Workspace"
       },
       {
-        "command": "laravelAware.showIndexStatus",
-        "title": "Laravel Assist: Show Index Status"
+        "command": "laravelKHelper.showIndexStatus",
+        "title": "Laravel K Helper: Show Index Status"
       },
       {
-        "command": "laravelAware.openOutput",
-        "title": "Laravel Assist: Open Output"
+        "command": "laravelKHelper.openOutput",
+        "title": "Laravel K Helper: Open Output"
       },
       {
-        "command": "laravelAware.openRouteReference",
-        "title": "Laravel Assist: Open Route Reference"
+        "command": "laravelKHelper.generateArtifactPreview",
+        "title": "Laravel K Helper: Generate Artifact Preview"
+      },
+      {
+        "command": "laravelKHelper.openRouteReference",
+        "title": "Laravel K Helper: Open Route Reference"
       }
     ],
     "configuration": {
-      "title": "Laravel Assist",
+      "title": "Laravel K Helper",
       "properties": {
-        "laravelAware.enabled": {
+        "laravelKHelper.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable Laravel-aware indexing and providers."
+          "description": "Enable Laravel K Helper indexing and providers."
         },
-        "laravelAware.projectRoot": {
+        "laravelKHelper.projectRoot": {
           "type": "string",
           "default": "",
           "description": "Optional Laravel project root relative to the workspace folder."
         },
-        "laravelAware.logLevel": {
+        "laravelKHelper.logLevel": {
           "type": "string",
           "enum": [
             "debug",
@@ -63,9 +79,9 @@
             "error"
           ],
           "default": "debug",
-          "description": "Minimum log level for Laravel Assist output."
+          "description": "Minimum log level for Laravel K Helper output."
         },
-        "laravelAware.index.exclude": {
+        "laravelKHelper.index.exclude": {
           "type": "array",
           "items": {
             "type": "string"
@@ -78,14 +94,135 @@
           ],
           "description": "Glob patterns excluded from Laravel indexing."
         },
+        "laravelKHelper.laravelDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Alias for projectRoot, retained for explicit Laravel subdirectory configuration."
+        },
+        "laravelKHelper.ideJson.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable ide.json custom completion rules when implemented."
+        },
+        "laravelKHelper.modules.mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "auto",
+            "nwidart"
+          ],
+          "default": "off",
+          "description": "Laravel module indexing mode."
+        },
+        "laravelAssist.enabled": {
+          "type": "boolean",
+          "default": true,
+          "deprecationMessage": "Use laravelKHelper.enabled instead.",
+          "description": "Enable Laravel K Helper indexing and providers."
+        },
+        "laravelAssist.projectRoot": {
+          "type": "string",
+          "default": "",
+          "deprecationMessage": "Use laravelKHelper.projectRoot instead.",
+          "description": "Optional Laravel project root relative to the workspace folder."
+        },
+        "laravelAssist.logLevel": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "debug",
+          "deprecationMessage": "Use laravelKHelper.logLevel instead.",
+          "description": "Minimum log level for Laravel K Helper output."
+        },
+        "laravelAssist.index.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "vendor/**",
+            "node_modules/**",
+            "storage/**",
+            "bootstrap/cache/**"
+          ],
+          "deprecationMessage": "Use laravelKHelper.index.exclude instead.",
+          "description": "Glob patterns excluded from Laravel indexing."
+        },
+        "laravelAssist.laravelDirectory": {
+          "type": "string",
+          "default": "",
+          "deprecationMessage": "Use laravelKHelper.laravelDirectory instead.",
+          "description": "Alias for projectRoot, retained for explicit Laravel subdirectory configuration."
+        },
+        "laravelAssist.ideJson.enabled": {
+          "type": "boolean",
+          "default": false,
+          "deprecationMessage": "Use laravelKHelper.ideJson.enabled instead.",
+          "description": "Enable ide.json custom completion rules when implemented."
+        },
+        "laravelAssist.modules.mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "auto",
+            "nwidart"
+          ],
+          "default": "off",
+          "deprecationMessage": "Use laravelKHelper.modules.mode instead.",
+          "description": "Laravel module indexing mode."
+        },
+        "laravelAware.enabled": {
+          "type": "boolean",
+          "default": true,
+          "deprecationMessage": "Use laravelKHelper.enabled instead.",
+          "description": "Enable Laravel-aware indexing and providers."
+        },
+        "laravelAware.projectRoot": {
+          "type": "string",
+          "default": "",
+          "deprecationMessage": "Use laravelKHelper.projectRoot instead.",
+          "description": "Optional Laravel project root relative to the workspace folder."
+        },
+        "laravelAware.logLevel": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "debug",
+          "deprecationMessage": "Use laravelKHelper.logLevel instead.",
+          "description": "Minimum log level for Laravel K Helper output."
+        },
+        "laravelAware.index.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "vendor/**",
+            "node_modules/**",
+            "storage/**",
+            "bootstrap/cache/**"
+          ],
+          "deprecationMessage": "Use laravelKHelper.index.exclude instead.",
+          "description": "Glob patterns excluded from Laravel indexing."
+        },
         "laravelAware.laravelDirectory": {
           "type": "string",
           "default": "",
+          "deprecationMessage": "Use laravelKHelper.laravelDirectory instead.",
           "description": "Alias for projectRoot, retained for explicit Laravel subdirectory configuration."
         },
         "laravelAware.ideJson.enabled": {
           "type": "boolean",
           "default": false,
+          "deprecationMessage": "Use laravelKHelper.ideJson.enabled instead.",
           "description": "Enable ide.json custom completion rules when implemented."
         },
         "laravelAware.modules.mode": {
@@ -96,6 +233,7 @@
             "nwidart"
           ],
           "default": "off",
+          "deprecationMessage": "Use laravelKHelper.modules.mode instead.",
           "description": "Laravel module indexing mode."
         }
       }

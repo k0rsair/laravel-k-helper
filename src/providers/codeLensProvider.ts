@@ -24,7 +24,7 @@ export class LaravelCodeLensProvider implements vscode.CodeLensProvider {
       return [
         new vscode.CodeLens(new vscode.Range(method.source.line, 0, method.source.line, 0), {
           title,
-          command: "laravelAware.openRouteReference",
+          command: "laravelKHelper.openRouteReference",
           arguments: [method.key],
         }),
       ];

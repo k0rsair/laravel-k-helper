@@ -11,4 +11,9 @@ class Product extends Model
     {
         return $this->hasOne(PhoneModel::class, 'article', 'phone_articul');
     }
+
+    public function scopeReady($query)
+    {
+        return $query;
+    }
 }

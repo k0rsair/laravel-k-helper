@@ -53,12 +53,34 @@ describe("Laravel indexing", () => {
     expect(index.all("blade-component").map((item) => item.key)).toEqual(
       expect.arrayContaining(["alert", "user-card"]),
     );
+    expect(index.all("livewire-component").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["user-table", "admin.dashboard-widget"]),
+    );
+    expect(index.all("inertia-page").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["Users/Index"]),
+    );
+    expect(index.all("filament-resource").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["App\\Filament\\Resources\\UserResource"]),
+    );
+    expect(index.filamentResourceCompletions("User").map((item) => item.key)).toEqual([
+      "App\\Filament\\Resources\\UserResource",
+    ]);
+    expect(index.findFilamentResourceByReference("UserResource")?.source.file).toContain("UserResource.php");
+    expect(index.all("nova-resource").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["App\\Nova\\User"]),
+    );
+    expect(index.novaResourceCompletions("User").map((item) => item.key)).toEqual(["App\\Nova\\User"]);
+    expect(index.findNovaResourceByReference("User")?.source.file).toContain("app/Nova/User.php");
     expect(index.all("validation-rule").map((item) => item.key)).toEqual(
       expect.arrayContaining(["required", "email", "unique", "timezone", "uppercase"]),
     );
     expect(index.all("request-field").map((item) => item.key)).toEqual(
       expect.arrayContaining(["name", "email", "profile.timezone"]),
     );
+    expect(index.all("route-middleware").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["auth", "verified", "project.active"]),
+    );
+    expect(index.find("route-middleware", "project.active")?.source.file).toContain("Kernel.php");
     expect(index.all("filesystem-disk").map((item) => item.key)).toEqual(
       expect.arrayContaining(["local", "public", "s3", "project_uploads"]),
     );
@@ -66,18 +88,46 @@ describe("Laravel indexing", () => {
       expect.arrayContaining(["users"]),
     );
     expect(index.all("database-column").filter((item) => item.table === "users").map((item) => item.key)).toEqual(
-      expect.arrayContaining(["id", "name", "email", "email_verified_at", "remember_token", "created_at", "updated_at"]),
+      expect.arrayContaining(["id", "name", "email", "email_verified_at", "is_active", "settings", "remember_token", "created_at", "updated_at"]),
     );
+    expect(index.all("database-column").find((item) => item.table === "users" && item.key === "is_active")?.columnType).toBe("boolean");
     expect(index.all("eloquent-model").map((item) => item.key)).toEqual(
-      expect.arrayContaining(["App\\Models\\User"]),
+      expect.arrayContaining(["App\\Models\\User", "App\\Domain\\CustomerProfile"]),
+    );
+    expect(
+      index.all("eloquent-field").filter((item) => item.modelClass === "App\\Domain\\CustomerProfile").map((item) => item.key),
+    ).toEqual(
+      expect.arrayContaining([
+        "id",
+        "name",
+        "email",
+        "email_verified_at",
+        "is_active",
+        "settings",
+        "remember_token",
+        "created_at",
+        "updated_at",
+      ]),
     );
     expect(index.all("eloquent-field").filter((item) => item.modelClass === "App\\Models\\User").map((item) => item.key)).toEqual(
-      expect.arrayContaining(["id", "name", "email", "email_verified_at", "remember_token", "created_at", "updated_at"]),
+      expect.arrayContaining([
+        "id",
+        "name",
+        "email",
+        "email_verified_at",
+        "is_active",
+        "remember_token",
+        "created_at",
+        "updated_at",
+        "settings",
+        "preferences",
+      ]),
     );
     expect(index.all("eloquent-relation").filter((item) => item.modelClass === "App\\Models\\User").map((item) => item.key)).toEqual(
-      expect.arrayContaining(["posts"]),
+      expect.arrayContaining(["posts", "tokens"]),
     );
     expect(index.find("eloquent-relation", "posts")?.relatedModelClass).toBe("App\\Models\\Post");
+    expect(index.find("eloquent-relation", "tokens")?.relatedModelClass).toBe("Laravel\\Sanctum\\PersonalAccessToken");
     expect(index.all("eloquent-relation").filter((item) => item.modelClass === "App\\Models\\Post").map((item) => item.key)).toEqual(
       expect.arrayContaining(["comments"]),
     );
@@ -91,6 +141,18 @@ describe("Laravel indexing", () => {
     expect(index.all("eloquent-relation").filter((item) => item.modelClass === "App\\Models\\PhoneModel").map((item) => item.key)).toEqual(
       expect.arrayContaining(["workpieces"]),
     );
+    expect(index.all("eloquent-scope").filter((item) => item.modelClass === "App\\Models\\Product").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["ready"]),
+    );
+    expect(index.all("eloquent-scope").filter((item) => item.modelClass === "App\\Models\\PhoneModel").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["active"]),
+    );
+    expect(index.all("eloquent-factory-state").filter((item) => item.modelClass === "App\\Models\\User").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["suspended", "withPreferences"]),
+    );
+    expect(index.all("eloquent-factory-state").map((item) => item.key)).not.toEqual(
+      expect.arrayContaining(["definition", "configure"]),
+    );
     expect(index.find("eloquent-relation", "posts")?.source.file).toContain("User.php");
     expect(index.eloquentFieldCompletions(path.join(fixtureRoot, "app", "Models", "User.php"), "em").map((item) => item.key)).toEqual([
       "email",
@@ -100,17 +162,53 @@ describe("Laravel indexing", () => {
       "email",
       "email_verified_at",
     ]);
+    expect(index.eloquentFieldCompletions(path.join(fixtureRoot, "routes", "web.php"), "pre", "User").map((item) => item.key)).toEqual([
+      "preferences",
+    ]);
+    expect(index.eloquentFieldCompletions(path.join(fixtureRoot, "routes", "web.php"), "set", "User").map((item) => item.key)).toEqual([
+      "settings",
+    ]);
+    expect(index.eloquentCastTypeCompletions(path.join(fixtureRoot, "app", "Models", "User.php"), "bo", "is_active").map((item) => item.key)).toEqual([
+      "boolean",
+    ]);
+    expect(index.eloquentCastTypeCompletions(path.join(fixtureRoot, "app", "Models", "User.php"), "arr", "settings").map((item) => item.key)).toEqual([
+      "array",
+    ]);
     expect(index.databaseColumnCompletions("em", "users").map((item) => item.key)).toEqual(["email", "email_verified_at"]);
     expect(index.databaseColumnCompletions("cre", "users").map((item) => item.key)).toEqual(["created_at"]);
     expect(index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "po", "User").map((item) => item.key)).toEqual([
       "posts",
     ]);
+    expect(index.eloquentRelationCompletions(path.join(fixtureRoot, "app", "Models", "User.php"), "").map((item) => item.key)).toEqual([
+      "posts",
+      "tokens",
+    ]);
+    expect(index.eloquentRelationCompletions(path.join(fixtureRoot, "app", "Models", "User.php"), "phone").map((item) => item.key)).toEqual([]);
+    expect(index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "po")).toEqual([]);
     expect(
       index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "co", "User", ["posts"]).map((item) => item.key),
     ).toEqual(["comments"]);
+    expect(
+      index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "work", "Product", ["phoneModel"]).map((item) => item.key),
+    ).toEqual(["workpieces"]);
+    expect(index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "phone", "Product", ["phoneModel"])).toEqual([]);
     expect(index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "phone", "Product").map((item) => item.key)).toEqual([
       "phoneModel",
     ]);
+    expect(index.eloquentScopeCompletions(path.join(fixtureRoot, "routes", "web.php"), "rea", "Product").map((item) => item.key)).toEqual([
+      "ready",
+    ]);
+    expect(index.eloquentScopeCompletions(path.join(fixtureRoot, "routes", "web.php"), "act", "PhoneModel").map((item) => item.key)).toEqual([
+      "active",
+    ]);
+    expect(index.eloquentScopeCompletions(path.join(fixtureRoot, "routes", "web.php"), "rea", "Route")).toEqual([]);
+    expect(
+      index.eloquentFactoryStateCompletions(path.join(fixtureRoot, "routes", "web.php"), "sus", "User").map((item) => item.key),
+    ).toEqual(["suspended"]);
+    expect(index.eloquentFactoryStateCompletions(path.join(fixtureRoot, "routes", "web.php"), "sus", "Route")).toEqual([]);
+    expect(index.all("route-middleware").filter((item) => item.key === "auth").map((item) => item.detail)).toEqual(
+      expect.arrayContaining(["Route middleware reference"]),
+    );
     expect(
       index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "", "Product", ["phoneModel"]).map((item) => item.key),
     ).toEqual(["workpieces"]);
@@ -142,6 +240,13 @@ describe("Laravel indexing", () => {
     expect(index.ideJsonCompletions(index.ideJsonRuleFor("function", "pint_preset", 0)!, "la").map((item) => item.key)).toEqual([
       "laravel",
     ]);
+    expect(index.ideJsonCompletions(index.ideJsonRuleFor("function", "package_route_target", 0)!, "us").map((item) => item.key)).toEqual([
+      "users.index",
+      "users.store",
+    ]);
+    expect(index.ideJsonCompletions(index.ideJsonRuleFor("function", "package_mode", 0)!, "a").map((item) => item.key)).toEqual([
+      "async",
+    ]);
     expect(index.all("controller-method").map((item) => item.key)).toEqual(
       expect.arrayContaining([
         "App\\Http\\Controllers\\Api\\LabelsController::getLabel",
@@ -150,6 +255,7 @@ describe("Laravel indexing", () => {
         "App\\Http\\Controllers\\Api\\LabelsController::chainedLabel",
         "App\\Http\\Controllers\\Api\\LabelsController::nestedLabel",
         "App\\Http\\Controllers\\Api\\LabelsController::arrayLabel",
+        "App\\Http\\Controllers\\Api\\LabelsController::legacyLabel",
         "App\\Http\\Controllers\\Api\\LabelsController::__invoke",
       ]),
     );
@@ -161,6 +267,7 @@ describe("Laravel indexing", () => {
         "chainedLabel",
         "nestedLabel",
         "arrayLabel",
+        "legacyLabel",
         "__invoke",
       ]),
     );
@@ -173,6 +280,9 @@ describe("Laravel indexing", () => {
     );
     expect(index.find("route-action", "arrayLabel")?.detail).toBe(
       "App\\Http\\Controllers\\Api\\LabelsController::arrayLabel",
+    );
+    expect(index.find("route-action", "legacyLabel")?.detail).toBe(
+      "App\\Http\\Controllers\\Api\\LabelsController::legacyLabel",
     );
     expect(index.find("route-action", "__invoke")?.detail).toBe(
       "App\\Http\\Controllers\\Api\\LabelsController::__invoke",
@@ -191,6 +301,10 @@ describe("Laravel indexing", () => {
     const completions = index.routeActionCompletions(routeFile, groupedOffset, "sto").map((item) => item.key);
     expect(completions).toContain("storeLabel");
     expect(completions).not.toContain("home");
+
+    expect(index.routeActionCompletions(routeFile, routeText.indexOf("LabelsController@leg"), "leg", "LabelsController").map((item) => item.key)).toEqual([
+      "legacyLabel",
+    ]);
 
     const method = index.find("controller-method", "App\\Http\\Controllers\\Api\\LabelsController::getLabel");
     expect(method).toBeDefined();

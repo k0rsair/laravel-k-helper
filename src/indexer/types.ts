@@ -17,6 +17,8 @@ export interface IndexedItem {
   modelClass?: string;
   relatedModelClass?: string;
   table?: string;
+  columnType?: string;
+  middlewareClass?: string;
 }
 
 export type IdeJsonCompletionKind =
@@ -56,6 +58,7 @@ export type LaravelIndexKind =
   | "blade-component"
   | "validation-rule"
   | "request-field"
+  | "route-middleware"
   | "controller-method"
   | "route-action"
   | "filesystem-disk"
@@ -63,7 +66,13 @@ export type LaravelIndexKind =
   | "database-table"
   | "database-column"
   | "eloquent-field"
-  | "eloquent-relation";
+  | "eloquent-relation"
+  | "eloquent-scope"
+  | "eloquent-factory-state"
+  | "livewire-component"
+  | "inertia-page"
+  | "filament-resource"
+  | "nova-resource";
 
 export interface LaravelIndexSnapshot {
   projectRoot: string;
@@ -76,6 +85,7 @@ export interface LaravelIndexSnapshot {
   bladeComponents: IndexedItem[];
   validationRules: IndexedItem[];
   requestFields: IndexedItem[];
+  routeMiddleware: IndexedItem[];
   controllerMethods: IndexedItem[];
   routeActions: IndexedItem[];
   routeControllerScopes: RouteControllerScope[];
@@ -85,6 +95,12 @@ export interface LaravelIndexSnapshot {
   databaseColumns: IndexedItem[];
   eloquentFields: IndexedItem[];
   eloquentRelations: IndexedItem[];
+  eloquentScopes: IndexedItem[];
+  eloquentFactoryStates: IndexedItem[];
+  livewireComponents: IndexedItem[];
+  inertiaPages: IndexedItem[];
+  filamentResources: IndexedItem[];
+  novaResources: IndexedItem[];
   ideJsonRules: IdeJsonCompletionRule[];
 }
 
@@ -97,6 +113,7 @@ export interface IndexStats {
   bladeComponents: number;
   validationRules: number;
   requestFields: number;
+  routeMiddleware: number;
   controllerMethods: number;
   routeActions: number;
   filesystemDisks: number;
@@ -105,6 +122,12 @@ export interface IndexStats {
   databaseColumns: number;
   eloquentFields: number;
   eloquentRelations: number;
+  eloquentScopes: number;
+  eloquentFactoryStates: number;
+  livewireComponents: number;
+  inertiaPages: number;
+  filamentResources: number;
+  novaResources: number;
 }
 
 export interface LaravelProject {

@@ -10,4 +10,9 @@ class PhoneModel extends BaseModel
     {
         return $this->hasMany(Workpiece::class, 'phone_model_id');
     }
+
+    public function scopeActive($query)
+    {
+        return $query;
+    }
 }

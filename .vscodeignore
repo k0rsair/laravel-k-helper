@@ -1,0 +1,16 @@
+src/**
+test/**
+docs/**
+.ai-factory/**
+.ai-factory.json
+.codex/**
+node_modules/**
+*.ts
+*.vsix
+.DS_Store
+.gitignore
+tsconfig.json
+vitest.config.ts
+package-lock.json
+dist/src/**
+dist/test/**

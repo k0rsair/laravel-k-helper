@@ -6,6 +6,9 @@ use App\Http\Controllers\Api\LabelsController;
 Route::get('/', fn () => view('welcome'))->name('home');
 Route::get('/users', [UserController::class, 'index'])->name('users.index');
 Route::post('/users', [UserController::class, 'store'])->name('users.store');
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('/dashboard', fn () => view('welcome'))->name('dashboard');
+});
 
 Route::group(['prefix' => 'labels', 'controller' => \App\Http\Controllers\Api\LabelsController::class], function () {
     Route::get('{projectDelivery}/{article}', 'getLabel');
@@ -27,4 +30,5 @@ Route::group(['prefix' => 'nested-labels', 'controller' => LabelsController::cla
 });
 
 Route::get('/array-labels/{label}', [LabelsController::class, 'arrayLabel']);
-Route::get('/invokable-labels/{label}', LabelsController::class);
+Route::get('/legacy-labels/{label}', 'LabelsController@legacyLabel');
+Route::get('/invokable-labels/{label}', LabelsController::class)->middleware('project.active');
