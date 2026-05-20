@@ -89,7 +89,7 @@ For a local VSIX build:
 cursor --install-extension /absolute/path/to/laravel-k-helper-0.10.1.vsix
 ```
 
-Reload Cursor or VS Code after reinstalling. If older local builds are installed under previous names, remove `local-dev.laravel-assist`, `local-dev.laravel-aware-vscode`, or `local-dev.laravolve` to avoid duplicate providers.
+Reload Cursor or VS Code after reinstalling. If older local builds are installed under previous names, remove `k0rsair.laravel-k-helper`, `local-dev.laravel-assist`, `local-dev.laravel-aware-vscode`, or `local-dev.laravolve` to avoid duplicate providers.
 
 ## Privacy
 

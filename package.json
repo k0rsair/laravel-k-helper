@@ -3,7 +3,11 @@
   "displayName": "Laravel K Helper",
   "description": "Laravel helpers for Cursor and VS Code.",
   "version": "0.10.1",
-  "publisher": "local-dev",
+  "publisher": "k0rsair",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/k0rsair/laravel-k-helper.git"
+  },
   "icon": "assets/icon.png",
   "license": "MIT",
   "preview": true,
