@@ -49,6 +49,7 @@ export function createLaravelWatchers(
     "app/Http/Requests/**/*.php",
     "app/Rules/**/*.php",
     "app/**/*.php",
+    "database/migrations/**/*.php",
   ];
 
   return patterns.map((pattern) => {

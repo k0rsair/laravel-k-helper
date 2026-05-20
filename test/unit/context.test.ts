@@ -33,6 +33,140 @@ describe("completion context", () => {
       kind: "filesystem-disk",
       prefix: "s",
     });
+    expect(resolveStringContext("Schema::table('us", "php")).toMatchObject({
+      kind: "database-table",
+      prefix: "us",
+    });
+    expect(resolveStringContext("DB::table('us", "php")).toMatchObject({
+      kind: "database-table",
+      prefix: "us",
+    });
+  });
+
+  it("resolves Eloquent field contexts", () => {
+    expect(resolveStringContext("User::where('em", "php")).toMatchObject({
+      kind: "eloquent-field",
+      prefix: "em",
+      modelClass: "User",
+    });
+    expect(resolveStringContext("App\\Models\\User::query()->where('na", "php")).toMatchObject({
+      kind: "eloquent-field",
+      prefix: "na",
+      modelClass: "App\\Models\\User",
+    });
+    expect(resolveStringContext("User::select(['em", "php")).toMatchObject({
+      kind: "eloquent-field",
+      prefix: "em",
+      modelClass: "User",
+    });
+    expect(resolveStringContext("User::query()->where('name', 'Ada')->orderBy('cre", "php")).toMatchObject({
+      kind: "eloquent-field",
+      prefix: "cre",
+      modelClass: "User",
+    });
+    expect(resolveStringContext("User::query()->pluck('em", "php")).toMatchObject({
+      kind: "eloquent-field",
+      prefix: "em",
+      modelClass: "User",
+    });
+    expect(resolveStringContext("User::query()->whereIn('id', [1])->addSelect(['em", "php")).toMatchObject({
+      kind: "eloquent-field",
+      prefix: "em",
+      modelClass: "User",
+    });
+    expect(resolveStringContext("    protected $fillable = ['em", "php")).toMatchObject({
+      kind: "eloquent-field",
+      prefix: "em",
+    });
+  });
+
+  it("resolves database query column contexts", () => {
+    expect(resolveStringContext("DB::table('users')->where('em", "php")).toMatchObject({
+      kind: "database-column",
+      prefix: "em",
+      table: "users",
+    });
+    expect(resolveStringContext("DB::table('users')->where('name', 'Ada')->orderBy('cre", "php")).toMatchObject({
+      kind: "database-column",
+      prefix: "cre",
+      table: "users",
+    });
+    expect(resolveStringContext("DB::table('users')->select(['em", "php")).toMatchObject({
+      kind: "database-column",
+      prefix: "em",
+      table: "users",
+    });
+    expect(resolveStringContext("DB::table('users')->pluck('em", "php")).toMatchObject({
+      kind: "database-column",
+      prefix: "em",
+      table: "users",
+    });
+  });
+
+  it("resolves Eloquent relation contexts", () => {
+    expect(resolveStringContext("User::with('po", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "po",
+      modelClass: "User",
+    });
+    expect(resolveStringContext("User::with(['po", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "po",
+      modelClass: "User",
+    });
+    expect(resolveStringContext("App\\Models\\User::query()->with(['po", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "po",
+      modelClass: "App\\Models\\User",
+    });
+    expect(resolveStringContext("$query->with(['po", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "po",
+    });
+    expect(resolveStringContext("$query->with(['comments', 'po", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "po",
+    });
+    expect(resolveStringContext("User::with('posts.co", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "co",
+      modelClass: "User",
+      relationPath: ["posts"],
+      rangeStart: 18,
+    });
+    expect(resolveStringContext("User::with(['posts.co", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "co",
+      modelClass: "User",
+      relationPath: ["posts"],
+    });
+    expect(resolveStringContext("Product::with('phoneModel.", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "",
+      modelClass: "Product",
+      relationPath: ["phoneModel"],
+      rangeStart: 26,
+    });
+    expect(resolveStringContext("Product::whereHas('phoneModel.work", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "work",
+      modelClass: "Product",
+      relationPath: ["phoneModel"],
+    });
+    expect(resolveStringContext("Product::withCount(['phone", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "phone",
+      modelClass: "Product",
+    });
+    expect(resolveStringContext("$product->loadMissing(['phoneModel.work", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "work",
+      relationPath: ["phoneModel"],
+    });
+    expect(resolveStringContext("$query->whereDoesntHave('phone", "php")).toMatchObject({
+      kind: "eloquent-relation",
+      prefix: "phone",
+    });
   });
 
   it("resolves validation rule pipe contexts", () => {

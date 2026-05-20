@@ -78,7 +78,18 @@ export class LaravelCompletionProvider implements vscode.CompletionItemProvider 
     const indexedItems =
       stringContext.kind === "route-action"
         ? index.routeActionCompletions(document.uri.fsPath, document.offsetAt(position), stringContext.prefix)
-        : index.all(stringContext.kind).filter((item) => item.key.startsWith(stringContext.prefix));
+        : stringContext.kind === "eloquent-field"
+          ? index.eloquentFieldCompletions(document.uri.fsPath, stringContext.prefix, stringContext.modelClass)
+          : stringContext.kind === "eloquent-relation"
+            ? index.eloquentRelationCompletions(
+                document.uri.fsPath,
+                stringContext.prefix,
+                stringContext.modelClass,
+                stringContext.relationPath,
+              )
+            : stringContext.kind === "database-column"
+              ? index.databaseColumnCompletions(stringContext.prefix, stringContext.table)
+          : index.all(stringContext.kind).filter((item) => item.key.startsWith(stringContext.prefix));
 
     const items = indexedItems
       .map((item) => {
@@ -124,6 +135,15 @@ function toCompletionKind(kind: string): vscode.CompletionItemKind {
       return vscode.CompletionItemKind.Method;
     case "filesystem-disk":
       return vscode.CompletionItemKind.Value;
+    case "eloquent-model":
+      return vscode.CompletionItemKind.Class;
+    case "database-table":
+      return vscode.CompletionItemKind.Struct;
+    case "database-column":
+    case "eloquent-field":
+      return vscode.CompletionItemKind.Field;
+    case "eloquent-relation":
+      return vscode.CompletionItemKind.Method;
     default:
       return vscode.CompletionItemKind.Text;
   }

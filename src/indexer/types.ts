@@ -14,6 +14,9 @@ export interface IndexedItem {
   routeSource?: SourceLocation;
   controllerClass?: string;
   method?: string;
+  modelClass?: string;
+  relatedModelClass?: string;
+  table?: string;
 }
 
 export type IdeJsonCompletionKind =
@@ -55,7 +58,12 @@ export type LaravelIndexKind =
   | "request-field"
   | "controller-method"
   | "route-action"
-  | "filesystem-disk";
+  | "filesystem-disk"
+  | "eloquent-model"
+  | "database-table"
+  | "database-column"
+  | "eloquent-field"
+  | "eloquent-relation";
 
 export interface LaravelIndexSnapshot {
   projectRoot: string;
@@ -72,6 +80,11 @@ export interface LaravelIndexSnapshot {
   routeActions: IndexedItem[];
   routeControllerScopes: RouteControllerScope[];
   filesystemDisks: IndexedItem[];
+  eloquentModels: IndexedItem[];
+  databaseTables: IndexedItem[];
+  databaseColumns: IndexedItem[];
+  eloquentFields: IndexedItem[];
+  eloquentRelations: IndexedItem[];
   ideJsonRules: IdeJsonCompletionRule[];
 }
 
@@ -87,6 +100,11 @@ export interface IndexStats {
   controllerMethods: number;
   routeActions: number;
   filesystemDisks: number;
+  eloquentModels: number;
+  databaseTables: number;
+  databaseColumns: number;
+  eloquentFields: number;
+  eloquentRelations: number;
 }
 
 export interface LaravelProject {

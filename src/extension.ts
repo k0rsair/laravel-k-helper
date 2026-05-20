@@ -12,11 +12,11 @@ let activeIndex: LaravelIndex | undefined;
 let logger: OutputLogger | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const output = vscode.window.createOutputChannel("Laravel Aware");
+  const output = vscode.window.createOutputChannel("Laravel Assist");
   logger = new OutputLogger(output, readLogLevel());
   context.subscriptions.push(output);
 
-  logger.info("[Extension.activate] activating Laravel Aware");
+  logger.info("[Extension.activate] activating Laravel Assist");
 
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
@@ -60,19 +60,19 @@ function registerCommands(context: vscode.ExtensionContext, getIndex: () => Lara
     vscode.commands.registerCommand("laravelAware.reindex", async () => {
       const index = getIndex();
       if (!index) {
-        void vscode.window.showInformationMessage("Laravel Aware: no active Laravel project.");
+        void vscode.window.showInformationMessage("Laravel Assist: no active Laravel project.");
         return;
       }
       await index.reindex();
-      void vscode.window.showInformationMessage("Laravel Aware: workspace reindexed.");
+      void vscode.window.showInformationMessage("Laravel Assist: workspace reindexed.");
     }),
     vscode.commands.registerCommand("laravelAware.showIndexStatus", () => {
       const index = getIndex();
       const stats = index?.stats();
       const status = stats
-        ? `Routes ${stats.routes}, actions ${stats.routeActions}, views ${stats.views}, config ${stats.config}, translations ${stats.translations}, env ${stats.env}, disks ${stats.filesystemDisks}, components ${stats.bladeComponents}, request fields ${stats.requestFields}`
+        ? `Routes ${stats.routes}, actions ${stats.routeActions}, views ${stats.views}, config ${stats.config}, translations ${stats.translations}, env ${stats.env}, disks ${stats.filesystemDisks}, components ${stats.bladeComponents}, request fields ${stats.requestFields}, models ${stats.eloquentModels}, relations ${stats.eloquentRelations}, tables ${stats.databaseTables}, columns ${stats.databaseColumns}`
         : "No active Laravel index.";
-      void vscode.window.showInformationMessage(`Laravel Aware: ${status}`);
+      void vscode.window.showInformationMessage(`Laravel Assist: ${status}`);
       logger?.info("[Extension.showIndexStatus] status requested", { stats });
     }),
     vscode.commands.registerCommand("laravelAware.openOutput", () => {
@@ -82,7 +82,7 @@ function registerCommands(context: vscode.ExtensionContext, getIndex: () => Lara
       const index = getIndex();
       const references = index?.routeReferencesForControllerMethod(controllerMethodKey) ?? [];
       if (references.length === 0) {
-        void vscode.window.showInformationMessage("Laravel Aware: no route reference found.");
+        void vscode.window.showInformationMessage("Laravel Assist: no route reference found.");
         logger?.warn("[Extension.openRouteReference] no route reference found", { controllerMethodKey });
         return;
       }
@@ -98,7 +98,7 @@ function registerCommands(context: vscode.ExtensionContext, getIndex: () => Lara
                 reference,
               })),
               {
-                title: "Laravel Aware: Select route declaration",
+                title: "Laravel Assist: Select route declaration",
                 placeHolder: "Choose a route declaration to open",
               },
             ).then((item) => item?.reference);

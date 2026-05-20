@@ -13,7 +13,9 @@ import {
   scanBladeComponents,
   scanConfig,
   scanControllerMethods,
+  scanDatabaseSchema,
   scanEnvKeys,
+  scanEloquentModels,
   scanFilesystemDisks,
   scanRequestFields,
   scanRouteActions,
@@ -48,6 +50,7 @@ export class LaravelIndex {
       controllerMethods,
       filesystemDisks,
       ideJsonRules,
+      databaseSchema,
     ] = await Promise.all([
       scanRoutes(this.projectRoot, this.logger),
       scanViews(this.projectRoot, this.logger),
@@ -60,7 +63,9 @@ export class LaravelIndex {
       scanControllerMethods(this.projectRoot, this.logger),
       scanFilesystemDisks(this.projectRoot, this.logger),
       scanIdeJsonRules(this.projectRoot, this.logger),
+      scanDatabaseSchema(this.projectRoot, this.logger),
     ]);
+    const eloquentIndex = await scanEloquentModels(this.projectRoot, this.logger, databaseSchema.columns);
     const routeControllerScopes = await scanRouteControllerScopes(this.projectRoot, this.logger);
     const routeActions = await scanRouteActions(this.projectRoot, this.logger, controllerMethods, routeControllerScopes);
 
@@ -79,6 +84,11 @@ export class LaravelIndex {
       routeActions,
       routeControllerScopes,
       filesystemDisks,
+      eloquentModels: eloquentIndex.models,
+      databaseTables: databaseSchema.tables,
+      databaseColumns: databaseSchema.columns,
+      eloquentFields: eloquentIndex.fields,
+      eloquentRelations: eloquentIndex.relations,
       ideJsonRules,
     };
 
@@ -107,6 +117,11 @@ export class LaravelIndex {
       controllerMethods: this.snapshot?.controllerMethods.length ?? 0,
       routeActions: this.snapshot?.routeActions.length ?? 0,
       filesystemDisks: this.snapshot?.filesystemDisks.length ?? 0,
+      eloquentModels: this.snapshot?.eloquentModels.length ?? 0,
+      databaseTables: this.snapshot?.databaseTables.length ?? 0,
+      databaseColumns: this.snapshot?.databaseColumns.length ?? 0,
+      eloquentFields: this.snapshot?.eloquentFields.length ?? 0,
+      eloquentRelations: this.snapshot?.eloquentRelations.length ?? 0,
     };
   }
 
@@ -139,6 +154,16 @@ export class LaravelIndex {
         return snapshot.routeActions;
       case "filesystem-disk":
         return snapshot.filesystemDisks;
+      case "eloquent-model":
+        return snapshot.eloquentModels;
+      case "database-table":
+        return snapshot.databaseTables;
+      case "database-column":
+        return snapshot.databaseColumns;
+      case "eloquent-field":
+        return snapshot.eloquentFields;
+      case "eloquent-relation":
+        return snapshot.eloquentRelations;
     }
   }
 
@@ -161,6 +186,33 @@ export class LaravelIndex {
         kind: "route-action",
         detail: item.key,
       }));
+  }
+
+  public eloquentFieldCompletions(file: string, prefix: string, modelReference?: string): IndexedItem[] {
+    const model = modelReference ? this.findEloquentModelByReference(modelReference) : this.findEloquentModelForFile(file);
+    const fields = model ? this.all("eloquent-field").filter((item) => item.modelClass === model.modelClass) : this.all("eloquent-field");
+    return fields.filter((item) => item.key.startsWith(prefix));
+  }
+
+  public eloquentRelationCompletions(
+    file: string,
+    prefix: string,
+    modelReference?: string,
+    relationPath: string[] = [],
+  ): IndexedItem[] {
+    const model = this.findRelationPathModel(file, modelReference, relationPath);
+    if (!model && relationPath.length > 0) {
+      return [];
+    }
+    const relations = model
+      ? this.all("eloquent-relation").filter((item) => item.modelClass === model.modelClass)
+      : this.all("eloquent-relation");
+    return relations.filter((item) => item.key.startsWith(prefix));
+  }
+
+  public databaseColumnCompletions(prefix: string, table?: string): IndexedItem[] {
+    const columns = table ? this.all("database-column").filter((item) => item.table === table) : this.all("database-column");
+    return columns.filter((item) => item.key.startsWith(prefix));
   }
 
   public ideJsonCompletions(rule: IdeJsonCompletionRule, prefix: string): IndexedItem[] {
@@ -205,6 +257,36 @@ export class LaravelIndex {
     return (this.snapshot?.routeControllerScopes ?? [])
       .filter((scope) => scope.file === file && offset >= scope.bodyStart && offset <= scope.bodyEnd)
       .sort((a, b) => b.bodyStart - a.bodyStart)[0];
+  }
+
+  private findEloquentModelForFile(file: string): IndexedItem | undefined {
+    return this.all("eloquent-model").find((item) => item.source.file === file);
+  }
+
+  private findEloquentModelByReference(reference: string): IndexedItem | undefined {
+    const normalized = reference.replace(/^\\/, "");
+    return this.all("eloquent-model").find((item) => {
+      const modelClass = item.modelClass ?? item.key;
+      const shortName = modelClass.split("\\").pop();
+      return modelClass === normalized || shortName === normalized || modelClass.endsWith(`\\${normalized}`);
+    });
+  }
+
+  private findRelationPathModel(file: string, modelReference: string | undefined, relationPath: string[]): IndexedItem | undefined {
+    let model = modelReference ? this.findEloquentModelByReference(modelReference) : this.findEloquentModelForFile(file);
+    for (const relationName of relationPath) {
+      if (!model) {
+        return undefined;
+      }
+      const relation = this
+        .all("eloquent-relation")
+        .find((item) => item.modelClass === model?.modelClass && item.key === relationName);
+      if (!relation?.relatedModelClass) {
+        return undefined;
+      }
+      model = this.findEloquentModelByReference(relation.relatedModelClass);
+    }
+    return model;
   }
 
   private itemsForIdeJsonKind(kind: IdeJsonCompletionKind, values: string[] | undefined): IndexedItem[] {

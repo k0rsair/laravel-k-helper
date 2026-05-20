@@ -1,6 +1,6 @@
-# Laravel Aware
+# Laravel Assist
 
-Laravel Aware is a VS Code extension prototype for Laravel-specific completions and navigation.
+Laravel Assist is a VS Code extension prototype for Laravel-specific completions and navigation.
 
 It is inspired by common Laravel IDE workflows, but it is not affiliated with Laravel Idea, JetBrains, or PhpStorm and does not copy proprietary implementation details.
 
@@ -17,6 +17,7 @@ It is inspired by common Laravel IDE workflows, but it is not affiliated with La
 - Show CodeLens route counts above controller methods that are referenced by routes; selecting the lens opens the first matching route declaration.
 - Show a route picker when a controller method is referenced by multiple routes.
 - Complete Laravel filesystem disks in `Storage::disk('...')` from `config/filesystems.php` `disks` keys.
+- Index database tables and columns from migrations, map Eloquent models to inferred or explicit tables, complete model fields in `Model::where(...)`, `Model::query()->where(...)`, `$fillable`, and `$guarded`, and complete/navigate Eloquent relations in `with('...')` and `with(['...', '...'])`.
 - Support `ide.json` custom completion rules for functions, methods, constructors, array keys, array values, Composer package/version gates, built-in package presets, indexed Laravel values, and static strings.
 - Navigate from exact string references to source files when possible.
 
@@ -37,7 +38,7 @@ It is inspired by common Laravel IDE workflows, but it is not affiliated with La
 ```
 - Package-gated rules are enabled only when the package exists in `composer.json`; optional `version` supports simple Composer-style major constraints such as `^11.0`, `>=10.0 <12.0`, and `^10.0 || ^11.0`.
 - Built-in package presets currently add Laravel filesystem disk completions for compatible `laravel/framework` projects and Pint preset-name completions when `laravel/pint` is installed.
-- Reindex automatically on relevant file changes or manually with `Laravel Aware: Reindex Workspace`.
+- Reindex automatically on relevant file changes or manually with `Laravel Assist: Reindex Workspace`.
 
 ## Privacy
 

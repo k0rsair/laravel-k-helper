@@ -3,6 +3,17 @@ import { readTextFile, toPosixPath, walkFiles } from "../utils/files";
 import type { IndexedItem, LaravelIndexKind, RouteControllerScope, SourceLocation } from "./types";
 import type { Logger } from "../logging/logger";
 
+export interface DatabaseSchemaIndex {
+  tables: IndexedItem[];
+  columns: IndexedItem[];
+}
+
+export interface EloquentIndex {
+  models: IndexedItem[];
+  fields: IndexedItem[];
+  relations: IndexedItem[];
+}
+
 const BUILT_IN_VALIDATION_RULES = [
   "accepted",
   "accepted_if",
@@ -178,6 +189,113 @@ export async function scanFilesystemDisks(projectRoot: string, logger: Logger): 
     items: items.length,
   });
   return uniqueItems(items);
+}
+
+export async function scanDatabaseSchema(projectRoot: string, logger: Logger): Promise<DatabaseSchemaIndex> {
+  const migrationsRoot = path.join(projectRoot, "database", "migrations");
+  const migrationFiles = await walkFiles(migrationsRoot, (file) => file.endsWith(".php"));
+  const tables: IndexedItem[] = [];
+  const columns: IndexedItem[] = [];
+
+  for (const file of migrationFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+
+    for (const table of scanMigrationTableBlocks(text)) {
+      tables.push({
+        ...createItem("database-table", table.name, file, text, table.index),
+        table: table.name,
+      });
+
+      for (const column of scanMigrationColumns(table.body, table.bodyOffset)) {
+        columns.push({
+          ...createItem("database-column", column.name, file, text, column.index),
+          detail: `${table.name} column`,
+          table: table.name,
+        });
+      }
+    }
+  }
+
+  logger.debug("[LaravelIndex.scanDatabaseSchema] completed", {
+    files: migrationFiles.length,
+    tables: tables.length,
+    columns: columns.length,
+  });
+
+  return {
+    tables: uniqueItems(tables),
+    columns: uniqueItems(columns),
+  };
+}
+
+export async function scanEloquentModels(
+  projectRoot: string,
+  logger: Logger,
+  databaseColumns: IndexedItem[],
+): Promise<EloquentIndex> {
+  const appFiles = await walkFiles(path.join(projectRoot, "app"), (file) => file.endsWith(".php"));
+  const models: IndexedItem[] = [];
+  const fields: IndexedItem[] = [];
+  const relations: IndexedItem[] = [];
+  const columnsByTable = new Map<string, IndexedItem[]>();
+
+  for (const column of databaseColumns) {
+    if (!column.table) {
+      continue;
+    }
+    columnsByTable.set(column.table, [...(columnsByTable.get(column.table) ?? []), column]);
+  }
+
+  for (const file of appFiles) {
+    const text = await readTextFile(file);
+    if (!text || !isEloquentModel(file, projectRoot, text)) {
+      continue;
+    }
+
+    const namespace = /namespace\s+([^;]+);/.exec(text)?.[1];
+    const classMatch = /class\s+([A-Za-z_][A-Za-z0-9_]*)\s+extends\s+([A-Za-z_\\][A-Za-z0-9_\\]*)/.exec(text);
+    const className = classMatch?.[1];
+    if (!namespace || !className || classMatch.index === undefined) {
+      continue;
+    }
+
+    const modelClass = `${namespace}\\${className}`;
+    const table = explicitModelTable(text) ?? inferTableName(className);
+    models.push({
+      ...createItem("eloquent-model", modelClass, file, text, classMatch.index),
+      detail: table,
+      modelClass,
+      table,
+    });
+
+    for (const column of columnsByTable.get(table) ?? []) {
+      fields.push({
+        ...column,
+        kind: "eloquent-field",
+        detail: `${modelClass} field (${table})`,
+        modelClass,
+        table,
+      });
+    }
+
+    relations.push(...scanEloquentRelations(text, file, modelClass, namespace, scanUseStatements(text)));
+  }
+
+  logger.debug("[LaravelIndex.scanEloquentModels] completed", {
+    files: appFiles.length,
+    models: models.length,
+    fields: fields.length,
+    relations: relations.length,
+  });
+
+  return {
+    models: uniqueItems(models),
+    fields: uniqueItems(fields),
+    relations: uniqueItems(relations),
+  };
 }
 
 export async function scanTranslations(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
@@ -470,6 +588,154 @@ function scanFilesystemDiskKeys(text: string): Array<{ value: string; index: num
   }
 
   return keys;
+}
+
+function scanMigrationTableBlocks(text: string): Array<{ name: string; index: number; body: string; bodyOffset: number }> {
+  const tables: Array<{ name: string; index: number; body: string; bodyOffset: number }> = [];
+  const regex = /Schema::(?:create|table)\(\s*['"]([A-Za-z0-9_]+)['"]\s*,\s*function\s*\([^)]*\)\s*\{/g;
+
+  for (const match of text.matchAll(regex)) {
+    if (match[1] === undefined || match.index === undefined) {
+      continue;
+    }
+    const openBrace = match.index + match[0].length - 1;
+    const closeBrace = findMatchingBrace(text, openBrace, text.length);
+    if (closeBrace < 0) {
+      continue;
+    }
+
+    tables.push({
+      name: match[1],
+      index: match.index + match[0].indexOf(match[1]),
+      body: text.slice(openBrace + 1, closeBrace),
+      bodyOffset: openBrace + 1,
+    });
+  }
+
+  return tables;
+}
+
+function scanMigrationColumns(body: string, bodyOffset: number): Array<{ name: string; index: number }> {
+  const columns: Array<{ name: string; index: number }> = [];
+  const columnMethods =
+    "bigInteger|binary|boolean|char|date|dateTime|dateTimeTz|decimal|double|enum|float|foreignId|integer|ipAddress|json|jsonb|longText|macAddress|mediumInteger|mediumText|morphs|nullableMorphs|rememberToken|set|smallInteger|string|text|time|timeTz|timestamp|timestampTz|tinyInteger|ulid|uuid|year";
+  const namedColumnRegex = new RegExp(`\\$table->(?:${columnMethods})\\(\\s*['"]([A-Za-z0-9_]+)['"]`, "g");
+
+  for (const match of body.matchAll(namedColumnRegex)) {
+    if (match[1] === undefined || match.index === undefined) {
+      continue;
+    }
+    const methodCall = match[0];
+    const methodName = /\$table->([A-Za-z_][A-Za-z0-9_]*)/.exec(methodCall)?.[1];
+    const baseIndex = bodyOffset + match.index + methodCall.lastIndexOf(match[1]);
+
+    if (methodName === "morphs" || methodName === "nullableMorphs") {
+      columns.push({ name: `${match[1]}_id`, index: baseIndex });
+      columns.push({ name: `${match[1]}_type`, index: baseIndex });
+      continue;
+    }
+
+    columns.push({ name: match[1], index: baseIndex });
+  }
+
+  for (const match of body.matchAll(/\$table->id\(\s*\)/g)) {
+    if (match.index !== undefined) {
+      columns.push({ name: "id", index: bodyOffset + match.index });
+    }
+  }
+
+  for (const match of body.matchAll(/\$table->timestamps\(\s*\)/g)) {
+    if (match.index !== undefined) {
+      columns.push({ name: "created_at", index: bodyOffset + match.index });
+      columns.push({ name: "updated_at", index: bodyOffset + match.index });
+    }
+  }
+
+  for (const match of body.matchAll(/\$table->softDeletes\(\s*\)/g)) {
+    if (match.index !== undefined) {
+      columns.push({ name: "deleted_at", index: bodyOffset + match.index });
+    }
+  }
+
+  for (const match of body.matchAll(/\$table->rememberToken\(\s*\)/g)) {
+    if (match.index !== undefined) {
+      columns.push({ name: "remember_token", index: bodyOffset + match.index });
+    }
+  }
+
+  return columns;
+}
+
+function isEloquentModel(file: string, projectRoot: string, text: string): boolean {
+  const modelsRoot = path.join(projectRoot, "app", "Models");
+  if (file.startsWith(modelsRoot + path.sep) && /\bclass\s+[A-Za-z_][A-Za-z0-9_]*\b/.test(text)) {
+    return true;
+  }
+
+  return /\bclass\s+[A-Za-z_][A-Za-z0-9_]*\s+extends\s+(?:\\?Illuminate\\Database\\Eloquent\\Model|Model|Authenticatable)\b/.test(text);
+}
+
+function scanEloquentRelations(
+  text: string,
+  file: string,
+  modelClass: string,
+  namespace: string,
+  uses: Map<string, string>,
+): IndexedItem[] {
+  const relations: IndexedItem[] = [];
+  const methodRegex = /\bpublic\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?::\s*[^{]+)?\{/g;
+  const relationCallRegex =
+    /\$this->(hasOne|hasMany|hasOneThrough|hasManyThrough|belongsTo|belongsToMany|morphOne|morphMany|morphTo|morphToMany|morphedByMany)\s*\(\s*(?:\\?([A-Za-z_][A-Za-z0-9_\\]*)::class)?/;
+
+  for (const match of text.matchAll(methodRegex)) {
+    if (match[1] === undefined || match.index === undefined) {
+      continue;
+    }
+    const openBrace = match.index + match[0].length - 1;
+    const closeBrace = findMatchingBrace(text, openBrace, text.length);
+    if (closeBrace < 0) {
+      continue;
+    }
+    const methodBody = text.slice(openBrace + 1, closeBrace);
+    const relationCall = relationCallRegex.exec(methodBody);
+    if (!relationCall?.[1]) {
+      continue;
+    }
+    const relatedModelClass = relationCall[2] ? resolveModelClass(relationCall[2], namespace, uses) : undefined;
+
+    relations.push({
+      ...createItem("eloquent-relation", match[1], file, text, match.index + match[0].indexOf(match[1])),
+      detail: `${modelClass} ${relationCall[1]} relation`,
+      modelClass,
+      relatedModelClass,
+      method: match[1],
+    });
+  }
+
+  return relations;
+}
+
+function resolveModelClass(className: string, namespace: string, uses: Map<string, string>): string {
+  const normalized = className.replace(/^\\/, "");
+  if (normalized.includes("\\")) {
+    return normalized;
+  }
+  return uses.get(normalized) ?? `${namespace}\\${normalized}`;
+}
+
+function explicitModelTable(text: string): string | undefined {
+  return /protected\s+\$table\s*=\s*['"]([A-Za-z0-9_]+)['"]\s*;/.exec(text)?.[1];
+}
+
+function inferTableName(className: string): string {
+  const snake = className.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+  if (snake.endsWith("y")) {
+    return `${snake.slice(0, -1)}ies`;
+  }
+  if (snake.endsWith("s")) {
+    return snake;
+  }
+  return `${snake}s`;
 }
 
 function findMatchingSquareBracket(text: string, openBracket: number, end: number): number {

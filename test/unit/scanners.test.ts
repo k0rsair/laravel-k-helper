@@ -62,6 +62,58 @@ describe("Laravel indexing", () => {
     expect(index.all("filesystem-disk").map((item) => item.key)).toEqual(
       expect.arrayContaining(["local", "public", "s3", "project_uploads"]),
     );
+    expect(index.all("database-table").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["users"]),
+    );
+    expect(index.all("database-column").filter((item) => item.table === "users").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["id", "name", "email", "email_verified_at", "remember_token", "created_at", "updated_at"]),
+    );
+    expect(index.all("eloquent-model").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["App\\Models\\User"]),
+    );
+    expect(index.all("eloquent-field").filter((item) => item.modelClass === "App\\Models\\User").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["id", "name", "email", "email_verified_at", "remember_token", "created_at", "updated_at"]),
+    );
+    expect(index.all("eloquent-relation").filter((item) => item.modelClass === "App\\Models\\User").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["posts"]),
+    );
+    expect(index.find("eloquent-relation", "posts")?.relatedModelClass).toBe("App\\Models\\Post");
+    expect(index.all("eloquent-relation").filter((item) => item.modelClass === "App\\Models\\Post").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["comments"]),
+    );
+    expect(index.all("eloquent-model").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["App\\Models\\Product", "App\\Models\\PhoneModel"]),
+    );
+    expect(index.all("eloquent-relation").filter((item) => item.modelClass === "App\\Models\\Product").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["phoneModel"]),
+    );
+    expect(index.find("eloquent-relation", "phoneModel")?.relatedModelClass).toBe("App\\Models\\PhoneModel");
+    expect(index.all("eloquent-relation").filter((item) => item.modelClass === "App\\Models\\PhoneModel").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["workpieces"]),
+    );
+    expect(index.find("eloquent-relation", "posts")?.source.file).toContain("User.php");
+    expect(index.eloquentFieldCompletions(path.join(fixtureRoot, "app", "Models", "User.php"), "em").map((item) => item.key)).toEqual([
+      "email",
+      "email_verified_at",
+    ]);
+    expect(index.eloquentFieldCompletions(path.join(fixtureRoot, "routes", "web.php"), "em", "User").map((item) => item.key)).toEqual([
+      "email",
+      "email_verified_at",
+    ]);
+    expect(index.databaseColumnCompletions("em", "users").map((item) => item.key)).toEqual(["email", "email_verified_at"]);
+    expect(index.databaseColumnCompletions("cre", "users").map((item) => item.key)).toEqual(["created_at"]);
+    expect(index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "po", "User").map((item) => item.key)).toEqual([
+      "posts",
+    ]);
+    expect(
+      index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "co", "User", ["posts"]).map((item) => item.key),
+    ).toEqual(["comments"]);
+    expect(index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "phone", "Product").map((item) => item.key)).toEqual([
+      "phoneModel",
+    ]);
+    expect(
+      index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "", "Product", ["phoneModel"]).map((item) => item.key),
+    ).toEqual(["workpieces"]);
     expect(index.ideJsonRuleFor("function", "custom_route_target", 0)).toMatchObject({
       kind: "routeName",
     });

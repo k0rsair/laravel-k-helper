@@ -1,9 +1,10 @@
 {
-  "name": "laravel-aware-vscode",
-  "displayName": "Laravel Aware",
+  "name": "laravel-assist",
+  "displayName": "Laravel Assist",
   "description": "Laravel-aware completions and navigation for VS Code.",
   "version": "0.10.0",
   "publisher": "local-dev",
+  "icon": "assets/icon.png",
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0",
@@ -25,23 +26,23 @@
     "commands": [
       {
         "command": "laravelAware.reindex",
-        "title": "Laravel Aware: Reindex Workspace"
+        "title": "Laravel Assist: Reindex Workspace"
       },
       {
         "command": "laravelAware.showIndexStatus",
-        "title": "Laravel Aware: Show Index Status"
+        "title": "Laravel Assist: Show Index Status"
       },
       {
         "command": "laravelAware.openOutput",
-        "title": "Laravel Aware: Open Output"
+        "title": "Laravel Assist: Open Output"
       },
       {
         "command": "laravelAware.openRouteReference",
-        "title": "Laravel Aware: Open Route Reference"
+        "title": "Laravel Assist: Open Route Reference"
       }
     ],
     "configuration": {
-      "title": "Laravel Aware",
+      "title": "Laravel Assist",
       "properties": {
         "laravelAware.enabled": {
           "type": "boolean",
@@ -62,7 +63,7 @@
             "error"
           ],
           "default": "debug",
-          "description": "Minimum log level for Laravel Aware output."
+          "description": "Minimum log level for Laravel Assist output."
         },
         "laravelAware.index.exclude": {
           "type": "array",
