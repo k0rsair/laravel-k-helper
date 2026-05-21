@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.2
+
+- Added automatic Laravel completion triggering while typing inside recognized PHP and Blade string contexts.
+
 ## 0.10.1
 
 - Renamed the extension to Laravel K Helper.

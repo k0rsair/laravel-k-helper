@@ -7,6 +7,7 @@ import { LaravelCompletionProvider } from "./providers/completionProvider";
 import { LaravelDefinitionProvider } from "./providers/definitionProvider";
 import { LaravelReferenceProvider } from "./providers/referenceProvider";
 import { LaravelCodeLensProvider } from "./providers/codeLensProvider";
+import { LaravelAutoSuggestTrigger } from "./providers/autoSuggestTrigger";
 import { buildLaravelArtifact, type LaravelArtifactType } from "./generators/artifacts";
 import { pathExists } from "./utils/files";
 
@@ -215,6 +216,7 @@ function registerProviders(
     vscode.languages.registerDefinitionProvider(selector, new LaravelDefinitionProvider(getIndex, activeLogger)),
     vscode.languages.registerReferenceProvider(selector, new LaravelReferenceProvider(getIndex, activeLogger)),
     vscode.languages.registerCodeLensProvider(selector, new LaravelCodeLensProvider(getIndex, activeLogger)),
+    new LaravelAutoSuggestTrigger(() => readSetting<boolean>("autoTriggerSuggest", true), activeLogger),
   );
 }
 

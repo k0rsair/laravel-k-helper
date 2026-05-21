@@ -55,6 +55,7 @@ Settings use the `laravelKHelper.*` namespace:
 - `laravelKHelper.projectRoot`
 - `laravelKHelper.laravelDirectory`
 - `laravelKHelper.logLevel`
+- `laravelKHelper.autoTriggerSuggest`
 - `laravelKHelper.index.exclude`
 - `laravelKHelper.ideJson.enabled`
 - `laravelKHelper.modules.mode`
@@ -86,7 +87,7 @@ Built-in package presets currently add Laravel filesystem disk completions for c
 For a local VSIX build:
 
 ```bash
-cursor --install-extension /absolute/path/to/laravel-k-helper-0.10.1.vsix
+cursor --install-extension /absolute/path/to/laravel-k-helper-0.10.2.vsix
 ```
 
 Reload Cursor or VS Code after reinstalling. If older local builds are installed under previous names, remove `k0rsair.laravel-k-helper`, `local-dev.laravel-assist`, `local-dev.laravel-aware-vscode`, or `local-dev.laravolve` to avoid duplicate providers.

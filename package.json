@@ -2,7 +2,7 @@
   "name": "laravel-k-helper",
   "displayName": "Laravel K Helper",
   "description": "Laravel helpers for Cursor and VS Code.",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "publisher": "k0rsair",
   "repository": {
     "type": "git",
@@ -85,6 +85,11 @@
           "default": "debug",
           "description": "Minimum log level for Laravel K Helper output."
         },
+        "laravelKHelper.autoTriggerSuggest": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically show Laravel completions when typing inside recognized PHP and Blade string contexts."
+        },
         "laravelKHelper.index.exclude": {
           "type": "array",
           "items": {
@@ -141,6 +146,12 @@
           "default": "debug",
           "deprecationMessage": "Use laravelKHelper.logLevel instead.",
           "description": "Minimum log level for Laravel K Helper output."
+        },
+        "laravelAssist.autoTriggerSuggest": {
+          "type": "boolean",
+          "default": true,
+          "deprecationMessage": "Use laravelKHelper.autoTriggerSuggest instead.",
+          "description": "Automatically show Laravel completions when typing inside recognized PHP and Blade string contexts."
         },
         "laravelAssist.index.exclude": {
           "type": "array",
@@ -202,6 +213,12 @@
           "default": "debug",
           "deprecationMessage": "Use laravelKHelper.logLevel instead.",
           "description": "Minimum log level for Laravel K Helper output."
+        },
+        "laravelAware.autoTriggerSuggest": {
+          "type": "boolean",
+          "default": true,
+          "deprecationMessage": "Use laravelKHelper.autoTriggerSuggest instead.",
+          "description": "Automatically show Laravel completions when typing inside recognized PHP and Blade string contexts."
         },
         "laravelAware.index.exclude": {
           "type": "array",
