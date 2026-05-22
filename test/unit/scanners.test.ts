@@ -23,8 +23,56 @@ describe("Laravel indexing", () => {
     await index.reindex();
 
     expect(index.all("route").map((item) => item.key)).toEqual(
-      expect.arrayContaining(["home", "users.index", "users.store"]),
+      expect.arrayContaining(["home", "users.index", "users.store", "api.health", "api.orders.cancel", "api.profiles.update"]),
     );
+    expect(index.all("http-route").map((item) => `${item.httpMethod} ${item.key}`)).toEqual(
+      expect.arrayContaining([
+        "GET /api/health",
+        "POST /api/orders/{order}/cancel",
+        "PATCH /api/v1/profiles/{profile}",
+        "GET /users",
+        "POST /users",
+        "GET /labels/{projectDelivery}/{article}",
+        "GET /nested-labels/archive/{label}",
+        "GET /array-labels/{label}",
+      ]),
+    );
+    expect(index.all("http-route").map((item) => `${item.httpMethod} ${item.key}`)).not.toContain("GET /{projectDelivery}/{article}");
+    expect(index.findHttpRouteByRequest("/users", "POST")).toMatchObject({
+      httpMethod: "POST",
+      uri: "/users",
+    });
+    expect(index.findHttpRouteByRequest("/array-labels/42", "GET")).toMatchObject({
+      httpMethod: "GET",
+      uri: "/array-labels/{label}",
+    });
+    expect(index.findHttpRouteByRequest("/labels/delivery-1/article-2", "GET")).toMatchObject({
+      httpMethod: "GET",
+      uri: "/labels/{projectDelivery}/{article}",
+    });
+    expect(index.findHttpRouteByRequest("/labels/{param}/{param}", "POST")).toMatchObject({
+      httpMethod: "POST",
+      uri: "/labels/{projectDelivery}/{article}",
+    });
+    expect(index.findHttpRouteByRequest("/nested-labels/archive/42", "GET")).toMatchObject({
+      httpMethod: "GET",
+      uri: "/nested-labels/archive/{label}",
+    });
+    expect(index.findHttpRouteByRequest("/api/orders/99/cancel", "POST")).toMatchObject({
+      httpMethod: "POST",
+      uri: "/api/orders/{order}/cancel",
+      routeName: "api.orders.cancel",
+    });
+    expect(index.findHttpRouteByRequest("/api/v1/profiles/42", "PATCH")).toMatchObject({
+      httpMethod: "PATCH",
+      uri: "/api/v1/profiles/{profile}",
+      routeName: "api.profiles.update",
+    });
+    expect(index.findHttpRouteByName("api.health")).toMatchObject({
+      httpMethod: "GET",
+      uri: "/api/health",
+    });
+    expect(index.findHttpRouteByRequest("/wrong/route", "GET")).toBeUndefined();
     expect(index.all("view").map((item) => item.key)).toEqual(
       expect.arrayContaining(["welcome", "users.index", "components.alert"]),
     );

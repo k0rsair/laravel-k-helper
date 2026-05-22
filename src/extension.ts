@@ -9,6 +9,7 @@ import { LaravelReferenceProvider } from "./providers/referenceProvider";
 import { LaravelCodeLensProvider } from "./providers/codeLensProvider";
 import { LaravelAutoSuggestTrigger } from "./providers/autoSuggestTrigger";
 import { buildLaravelArtifact, type LaravelArtifactType } from "./generators/artifacts";
+import type { SourceLocation } from "./indexer/types";
 import { pathExists } from "./utils/files";
 
 let activeIndex: LaravelIndex | undefined;
@@ -72,7 +73,7 @@ function registerCommands(context: vscode.ExtensionContext, getIndex: () => Lara
     const index = getIndex();
     const stats = index?.stats();
     const status = stats
-      ? `Routes ${stats.routes}, actions ${stats.routeActions}, middleware ${stats.routeMiddleware}, views ${stats.views}, config ${stats.config}, translations ${stats.translations}, env ${stats.env}, disks ${stats.filesystemDisks}, components ${stats.bladeComponents}, Livewire ${stats.livewireComponents}, Inertia ${stats.inertiaPages}, Filament ${stats.filamentResources}, Nova ${stats.novaResources}, request fields ${stats.requestFields}, models ${stats.eloquentModels}, relations ${stats.eloquentRelations}, scopes ${stats.eloquentScopes}, factory states ${stats.eloquentFactoryStates}, tables ${stats.databaseTables}, columns ${stats.databaseColumns}`
+      ? `Routes ${stats.routes}, HTTP routes ${stats.httpRoutes}, actions ${stats.routeActions}, middleware ${stats.routeMiddleware}, views ${stats.views}, config ${stats.config}, translations ${stats.translations}, env ${stats.env}, disks ${stats.filesystemDisks}, components ${stats.bladeComponents}, Livewire ${stats.livewireComponents}, Inertia ${stats.inertiaPages}, Filament ${stats.filamentResources}, Nova ${stats.novaResources}, request fields ${stats.requestFields}, models ${stats.eloquentModels}, relations ${stats.eloquentRelations}, scopes ${stats.eloquentScopes}, factory states ${stats.eloquentFactoryStates}, tables ${stats.databaseTables}, columns ${stats.databaseColumns}`
       : "No active Laravel index.";
     void vscode.window.showInformationMessage(`${EXTENSION_NAME}: ${status}`);
     logger?.info("[Extension.showIndexStatus] status requested", { stats });
@@ -176,6 +177,17 @@ function registerCommands(context: vscode.ExtensionContext, getIndex: () => Lara
       selection: new vscode.Range(routeSource.line, routeSource.character, routeSource.line, routeSource.character),
     });
   };
+  const openSourceLocation = async (source: SourceLocation) => {
+    logger?.info("[Extension.openSourceLocation] opening source location", {
+      file: source.file,
+      line: source.line,
+      character: source.character,
+    });
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(source.file));
+    await vscode.window.showTextDocument(document, {
+      selection: new vscode.Range(source.line, source.character, source.line, source.character),
+    });
+  };
 
   context.subscriptions.push(
     vscode.commands.registerCommand("laravelKHelper.reindex", reindex),
@@ -183,11 +195,13 @@ function registerCommands(context: vscode.ExtensionContext, getIndex: () => Lara
     vscode.commands.registerCommand("laravelKHelper.openOutput", openOutput),
     vscode.commands.registerCommand("laravelKHelper.generateArtifactPreview", generateArtifactPreview),
     vscode.commands.registerCommand("laravelKHelper.openRouteReference", openRouteReference),
+    vscode.commands.registerCommand("laravelKHelper.openSourceLocation", openSourceLocation),
     vscode.commands.registerCommand("laravelAware.reindex", reindex),
     vscode.commands.registerCommand("laravelAware.showIndexStatus", showIndexStatus),
     vscode.commands.registerCommand("laravelAware.openOutput", openOutput),
     vscode.commands.registerCommand("laravelAware.generateArtifactPreview", generateArtifactPreview),
     vscode.commands.registerCommand("laravelAware.openRouteReference", openRouteReference),
+    vscode.commands.registerCommand("laravelAware.openSourceLocation", openSourceLocation),
   );
 }
 
@@ -196,15 +210,24 @@ function registerProviders(
   getIndex: () => LaravelIndex | undefined,
   activeLogger: OutputLogger,
 ): void {
-  const selector: vscode.DocumentSelector = [
+  const laravelSelector: vscode.DocumentSelector = [
     { language: "php", scheme: "file" },
     { language: "blade", scheme: "file" },
     { pattern: "**/*.blade.php", scheme: "file" },
   ];
+  const frontendSelector: vscode.DocumentSelector = [
+    { language: "javascript", scheme: "file" },
+    { language: "javascriptreact", scheme: "file" },
+    { language: "typescript", scheme: "file" },
+    { language: "typescriptreact", scheme: "file" },
+    { language: "vue", scheme: "file" },
+    { language: "svelte", scheme: "file" },
+  ];
+  const codeLensSelector: vscode.DocumentSelector = [...laravelSelector, ...frontendSelector];
 
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
-      selector,
+      laravelSelector,
       new LaravelCompletionProvider(getIndex, activeLogger),
       "'",
       '"',
@@ -213,9 +236,9 @@ function registerProviders(
       ":",
       ">",
     ),
-    vscode.languages.registerDefinitionProvider(selector, new LaravelDefinitionProvider(getIndex, activeLogger)),
-    vscode.languages.registerReferenceProvider(selector, new LaravelReferenceProvider(getIndex, activeLogger)),
-    vscode.languages.registerCodeLensProvider(selector, new LaravelCodeLensProvider(getIndex, activeLogger)),
+    vscode.languages.registerDefinitionProvider(laravelSelector, new LaravelDefinitionProvider(getIndex, activeLogger)),
+    vscode.languages.registerReferenceProvider(laravelSelector, new LaravelReferenceProvider(getIndex, activeLogger)),
+    vscode.languages.registerCodeLensProvider(codeLensSelector, new LaravelCodeLensProvider(getIndex, activeLogger)),
     new LaravelAutoSuggestTrigger(() => readSetting<boolean>("autoTriggerSuggest", true), activeLogger),
   );
 }

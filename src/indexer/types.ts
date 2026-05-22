@@ -19,6 +19,9 @@ export interface IndexedItem {
   table?: string;
   columnType?: string;
   middlewareClass?: string;
+  uri?: string;
+  httpMethod?: string;
+  routeName?: string;
 }
 
 export type IdeJsonCompletionKind =
@@ -51,6 +54,7 @@ export interface RouteControllerScope {
 
 export type LaravelIndexKind =
   | "route"
+  | "http-route"
   | "view"
   | "config"
   | "translation"
@@ -78,6 +82,7 @@ export interface LaravelIndexSnapshot {
   projectRoot: string;
   indexedAt: number;
   routes: IndexedItem[];
+  httpRoutes: IndexedItem[];
   views: IndexedItem[];
   config: IndexedItem[];
   translations: IndexedItem[];
@@ -106,6 +111,7 @@ export interface LaravelIndexSnapshot {
 
 export interface IndexStats {
   routes: number;
+  httpRoutes: number;
   views: number;
   config: number;
   translations: number;

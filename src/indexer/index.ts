@@ -18,6 +18,7 @@ import {
   scanEloquentModels,
   scanEcosystemItems,
   scanFilesystemDisks,
+  scanHttpRoutes,
   scanRequestFields,
   scanRouteMiddleware,
   scanRouteActions,
@@ -42,6 +43,7 @@ export class LaravelIndex {
 
     const [
       routes,
+      httpRoutes,
       views,
       config,
       translations,
@@ -57,6 +59,7 @@ export class LaravelIndex {
       ecosystemItems,
     ] = await Promise.all([
       scanRoutes(this.projectRoot, this.logger),
+      scanHttpRoutes(this.projectRoot, this.logger),
       scanViews(this.projectRoot, this.logger),
       scanConfig(this.projectRoot, this.logger),
       scanTranslations(this.projectRoot, this.logger),
@@ -79,6 +82,7 @@ export class LaravelIndex {
       projectRoot: this.projectRoot,
       indexedAt: Date.now(),
       routes,
+      httpRoutes,
       views,
       config,
       translations,
@@ -120,6 +124,7 @@ export class LaravelIndex {
   public stats(): IndexStats {
     return {
       routes: this.snapshot?.routes.length ?? 0,
+      httpRoutes: this.snapshot?.httpRoutes.length ?? 0,
       views: this.snapshot?.views.length ?? 0,
       config: this.snapshot?.config.length ?? 0,
       translations: this.snapshot?.translations.length ?? 0,
@@ -154,6 +159,8 @@ export class LaravelIndex {
     switch (kind) {
       case "route":
         return snapshot.routes;
+      case "http-route":
+        return snapshot.httpRoutes;
       case "view":
         return snapshot.views;
       case "config":
@@ -203,6 +210,25 @@ export class LaravelIndex {
 
   public find(kind: LaravelIndexKind, key: string): IndexedItem | undefined {
     return this.all(kind).find((item) => item.key === key);
+  }
+
+  public findHttpRouteByRequest(uri: string, method?: string): IndexedItem | undefined {
+    const normalizedUri = normalizeHttpUri(uri);
+    const normalizedMethod = method?.toUpperCase();
+    const candidates = this.all("http-route")
+      .filter((item) => {
+        if (normalizedMethod && item.httpMethod && item.httpMethod !== "ANY" && item.httpMethod !== normalizedMethod) {
+          return false;
+        }
+        return item.uri ? routeUriMatches(item.uri, normalizedUri) : item.key === normalizedUri;
+      })
+      .sort((a, b) => routeMatchScore(b, normalizedUri, normalizedMethod) - routeMatchScore(a, normalizedUri, normalizedMethod));
+
+    return candidates[0];
+  }
+
+  public findHttpRouteByName(routeName: string): IndexedItem | undefined {
+    return this.all("http-route").find((item) => item.routeName === routeName);
   }
 
   public routeActionCompletions(file: string, offset: number, prefix: string, controllerReference?: string): IndexedItem[] {
@@ -480,6 +506,60 @@ function castTypesForColumn(columnType: string | undefined): Array<{ value: stri
     byValue.set(castType.value, castType);
   }
   return [...byValue.values()];
+}
+
+function normalizeHttpUri(uri: string): string {
+  let value = uri.trim();
+  try {
+    if (/^https?:\/\//i.test(value)) {
+      value = new URL(value).pathname;
+    }
+  } catch {
+    // Keep the original value when URL parsing fails; route matching will simply miss.
+  }
+  value = value.split(/[?#]/)[0] ?? value;
+  value = value.replace(/^\/+|\/+$/g, "");
+  return value ? `/${value}` : "/";
+}
+
+function routeUriMatches(routeUri: string, requestUri: string): boolean {
+  const normalizedRoute = normalizeHttpUri(routeUri);
+  if (normalizedRoute === requestUri) {
+    return true;
+  }
+
+  const pattern = normalizedRoute
+    .split("/")
+    .map((segment) => {
+      if (/^\{[^}]+\}$/.test(segment)) {
+        return "[^/]+";
+      }
+      return escapeRegex(segment);
+    })
+    .join("/");
+
+  return new RegExp(`^${pattern}/?$`).test(requestUri);
+}
+
+function routeMatchScore(item: IndexedItem, requestUri: string, method?: string): number {
+  let score = 0;
+  if (item.uri && normalizeHttpUri(item.uri) === requestUri) {
+    score += 10;
+  }
+  if (item.uri) {
+    score += item.uri.split("/").filter((segment) => segment !== "" && !/^\{[^}]+\}$/.test(segment)).length;
+  }
+  if (method && item.httpMethod === method) {
+    score += 5;
+  }
+  if (item.httpMethod === "ANY") {
+    score += 1;
+  }
+  return score;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function preferredCastTypesForColumn(columnType: string | undefined): Array<{ value: string; detail: string }> {

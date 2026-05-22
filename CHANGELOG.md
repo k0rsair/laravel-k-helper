@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.3
+
+- Added frontend HTTP route navigation for common `axios`, `fetch`, and Ziggy-style `route(...)` calls.
+- Added clickable frontend route CodeLens hints with support for common concatenated and template literal URLs.
+- Included route file prefixes from `RouteServiceProvider` and Laravel 11-style routing configuration when matching frontend HTTP targets.
+
 ## 0.10.2
 
 - Added automatic Laravel completion triggering while typing inside recognized PHP and Blade string contexts.

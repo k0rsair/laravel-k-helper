@@ -52,20 +52,31 @@ Rationale: the current MVP already covers project detection, route/view/config/t
 - [ ] Task 19: Build compatibility fixtures from realistic package-provided `ide.json` files and document unsupported schema fields explicitly.
 - [ ] Task 20: Add user-facing diagnostics/logging when an `ide.json` file is skipped or partially unsupported.
 
-### Phase 5: Ecosystem Workflow Deepening
-- [ ] Task 21: Deepen Livewire indexing for component properties, actions, events, validation rules, Volt-style files, view bindings, and navigation between class/view usage.
-- [ ] Task 22: Deepen Inertia indexing for pages, page props, route-to-page references, shared props, and common Vue/React/Svelte page locations.
-- [ ] Task 23: Deepen Filament indexing for resources, pages, relation managers, form fields, table columns, actions, widgets, and navigation between resource classes.
-- [ ] Task 24: Deepen Nova indexing for resources, fields, filters, lenses, actions, cards, and resource registration/usage sites.
-- [ ] Task 25: Add Dusk selector intelligence last inside this phase: page objects, browser macros, component selectors, and navigation between tests and page classes.
+### Phase 5: Frontend HTTP Route Intelligence
+- [x] Task 21: Add JavaScript/TypeScript/Vue/React document selectors for frontend Laravel integration contexts without enabling broad noisy completions everywhere.
+- [x] Task 22: Parse common HTTP request calls such as `axios.get/post/put/patch/delete(...)`, `axios({ method, url })`, `fetch(url, { method })`, and configurable client aliases.
+- [x] Task 23: Resolve frontend URL strings and Ziggy-style `route('name', ...)` calls to indexed Laravel routes with method-aware matching where the HTTP method is known.
+- [x] Task 24: Add go-to-definition from frontend request URLs/route names to Laravel route declarations, including parameterized route paths such as `/users/{user}/orders`.
+- [x] Task 25: Add CodeLens above frontend HTTP calls that shows the resolved Laravel route and opens the matching route declaration.
+- [x] Task 26: Parse dynamic frontend URL expressions such as string concatenation and template literals into route-like patterns for matching.
+- [ ] Task 27: Add first-pass response metadata inference from controller return statements, API resources, `response()->json(...)`, `JsonResource`, arrays, and simple DTO/resource shapes.
+- [ ] Task 28: Surface inferred response properties in JS/TS hovers/completions only when confidence is high; otherwise log why response typing is unavailable instead of guessing.
+- [ ] Task 29: Add fixture coverage for axios, fetch, Ziggy route helpers, literal API URLs, named routes, multiple HTTP methods on the same path, ambiguous/dynamic URLs, CodeLens, concatenation, and template literals.
 
-### Phase 6: Workspace Diagnostics And Release Hardening
-- [ ] Task 26: Add a diagnostic pipeline with severity levels, code actions where safe, and settings to enable/disable noisy checks.
-- [ ] Task 27: Add cross-file diagnostics for routes/controllers, config keys, env keys, validation rules, views, Blade components, model fields, and ecosystem references.
-- [ ] Task 28: Add cache invalidation tests for migration/model/view/package changes and verify partial reindex behavior.
-- [ ] Task 29: Add a fixture matrix for Laravel 10, 11, 12, and 13-style project layouts where practical.
-- [ ] Task 30: Update README, CHANGELOG, and marketplace notes after each user-facing phase.
-- [ ] Task 31: Package a fresh VSIX after meaningful feature batches and verify install behavior in Cursor/VS Code.
+### Phase 6: Ecosystem Workflow Deepening
+- [ ] Task 30: Deepen Livewire indexing for component properties, actions, events, validation rules, Volt-style files, view bindings, and navigation between class/view usage.
+- [ ] Task 31: Deepen Inertia indexing for pages, page props, route-to-page references, shared props, and common Vue/React/Svelte page locations.
+- [ ] Task 32: Deepen Filament indexing for resources, pages, relation managers, form fields, table columns, actions, widgets, and navigation between resource classes.
+- [ ] Task 33: Deepen Nova indexing for resources, fields, filters, lenses, actions, cards, and resource registration/usage sites.
+- [ ] Task 34: Add Dusk selector intelligence last inside this phase: page objects, browser macros, component selectors, and navigation between tests and page classes.
+
+### Phase 7: Workspace Diagnostics And Release Hardening
+- [ ] Task 35: Add a diagnostic pipeline with severity levels, code actions where safe, and settings to enable/disable noisy checks.
+- [ ] Task 36: Add cross-file diagnostics for routes/controllers, config keys, env keys, validation rules, views, Blade components, model fields, frontend HTTP requests, and ecosystem references.
+- [ ] Task 37: Add cache invalidation tests for migration/model/view/package/frontend changes and verify partial reindex behavior.
+- [ ] Task 38: Add a fixture matrix for Laravel 10, 11, 12, and 13-style project layouts where practical.
+- [ ] Task 39: Update README, CHANGELOG, and marketplace notes after each user-facing phase.
+- [ ] Task 40: Package a fresh VSIX after meaningful feature batches and verify install behavior in Cursor/VS Code.
 
 ## Deferred: Generators
 - Keep the existing artifact preview command intact.
@@ -83,5 +94,6 @@ Rationale: the current MVP already covers project detection, route/view/config/t
 - **Commit 2** (after tasks 7-11): "feat: improve eloquent query precision"
 - **Commit 3** (after tasks 12-16): "feat: deepen blade component intelligence"
 - **Commit 4** (after tasks 17-20): "feat: expand ide json compatibility"
-- **Commit 5** (after tasks 21-25): "feat: deepen laravel ecosystem workflows"
-- **Commit 6** (after tasks 26-31): "feat: add diagnostics and release hardening"
+- **Commit 5** (after tasks 21-29): "feat: add frontend http route intelligence"
+- **Commit 6** (after tasks 30-34): "feat: deepen laravel ecosystem workflows"
+- **Commit 7** (after tasks 35-40): "feat: add diagnostics and release hardening"

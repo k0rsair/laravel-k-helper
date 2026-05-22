@@ -158,6 +158,39 @@ export async function scanRoutes(projectRoot: string, logger: Logger): Promise<I
   return uniqueItems(items);
 }
 
+export async function scanHttpRoutes(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+  const routesRoot = path.join(projectRoot, "routes");
+  const routeFiles = await walkFiles(routesRoot, (file) => file.endsWith(".php"));
+  const routeFilePrefixes = await scanRouteFilePrefixes(projectRoot, logger);
+  const items: IndexedItem[] = [];
+
+  for (const file of routeFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+
+    for (const route of scanHttpRouteDeclarations(text, routeFilePrefixes.get(file) ?? "")) {
+      const item = createItem("http-route", normalizeRouteUriForIndex(route.uri), file, text, route.uriIndex);
+      items.push({
+        ...item,
+        label: `${route.method} ${route.uri}`,
+        detail: route.routeName ? `${route.method} ${route.uri} (${route.routeName})` : `${route.method} ${route.uri}`,
+        uri: route.uri,
+        httpMethod: route.method,
+        routeName: route.routeName,
+      });
+    }
+  }
+
+  logger.debug("[LaravelIndex.scanHttpRoutes] completed", {
+    files: routeFiles.length,
+    routeFilePrefixes: routeFilePrefixes.size,
+    items: items.length,
+  });
+  return uniqueItems(items);
+}
+
 export async function scanViews(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
   const viewsRoot = path.join(projectRoot, "resources", "views");
   const viewFiles = await walkFiles(viewsRoot, (file) => file.endsWith(".blade.php"));
@@ -1633,6 +1666,233 @@ function scanRouteMiddlewareReferences(text: string): Array<{ key: string; index
   return references;
 }
 
+async function scanRouteFilePrefixes(projectRoot: string, logger: Logger): Promise<Map<string, string>> {
+  const prefixes = new Map<string, string>();
+  const providerFiles = await walkFiles(path.join(projectRoot, "app", "Providers"), (file) => file.endsWith(".php"));
+
+  for (const file of providerFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+    for (const routeFilePrefix of scanRouteFilePrefixReferences(text)) {
+      prefixes.set(path.join(projectRoot, "routes", routeFilePrefix.file), routeFilePrefix.prefix);
+    }
+  }
+
+  const bootstrapText = await readTextFile(path.join(projectRoot, "bootstrap", "app.php"));
+  if (bootstrapText) {
+    for (const routeFilePrefix of scanBootstrapRouteFilePrefixes(bootstrapText)) {
+      prefixes.set(path.join(projectRoot, "routes", routeFilePrefix.file), routeFilePrefix.prefix);
+    }
+  }
+
+  logger.debug("[LaravelIndex.scanRouteFilePrefixes] completed", {
+    providerFiles: providerFiles.length,
+    items: prefixes.size,
+  });
+
+  return prefixes;
+}
+
+function scanRouteFilePrefixReferences(text: string): Array<{ file: string; prefix: string }> {
+  const references: Array<{ file: string; prefix: string }> = [];
+  for (const statement of routeGroupStatements(text)) {
+    const file = routeFileFromGroupStatement(statement);
+    if (!file) {
+      continue;
+    }
+
+    references.push({
+      file,
+      prefix: extractRoutePrefix(statement) ?? "",
+    });
+  }
+  return references;
+}
+
+function routeGroupStatements(text: string): string[] {
+  const statements: string[] = [];
+  let start = 0;
+  let quote: string | undefined;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === ";") {
+      const statement = text.slice(start, index + 1);
+      if (statement.includes("->group") || statement.includes("Route::group")) {
+        statements.push(statement);
+      }
+      start = index + 1;
+    }
+  }
+  return statements;
+}
+
+function routeFileFromGroupStatement(statement: string): string | undefined {
+  return (
+    /base_path\(\s*['"]routes\/([^'"]+\.php)['"]\s*\)/.exec(statement)?.[1] ??
+    /routes_path\(\s*['"]([^'"]+\.php)['"]\s*\)/.exec(statement)?.[1] ??
+    /__DIR__\s*\.\s*['"]\/\.\.\/routes\/([^'"]+\.php)['"]/.exec(statement)?.[1]
+  );
+}
+
+function scanBootstrapRouteFilePrefixes(text: string): Array<{ file: string; prefix: string }> {
+  const references: Array<{ file: string; prefix: string }> = [];
+  const withRouting = /->withRouting\(([\s\S]*?)\)\s*;/.exec(text)?.[1];
+  if (!withRouting) {
+    return references;
+  }
+
+  const apiFile =
+    /\bapi\s*:\s*__DIR__\s*\.\s*['"]\/\.\.\/routes\/([^'"]+\.php)['"]/.exec(withRouting)?.[1] ??
+    /\bapi\s*:\s*base_path\(\s*['"]routes\/([^'"]+\.php)['"]\s*\)/.exec(withRouting)?.[1];
+  if (apiFile) {
+    references.push({
+      file: apiFile,
+      prefix: /\bapiPrefix\s*:\s*['"]([^'"]+)['"]/.exec(withRouting)?.[1] ?? "api",
+    });
+  }
+
+  const webFile =
+    /\bweb\s*:\s*__DIR__\s*\.\s*['"]\/\.\.\/routes\/([^'"]+\.php)['"]/.exec(withRouting)?.[1] ??
+    /\bweb\s*:\s*base_path\(\s*['"]routes\/([^'"]+\.php)['"]\s*\)/.exec(withRouting)?.[1];
+  if (webFile) {
+    references.push({ file: webFile, prefix: "" });
+  }
+
+  return references;
+}
+
+function scanHttpRouteDeclarations(text: string, filePrefix = ""): Array<{ method: string; uri: string; uriIndex: number; routeName?: string }> {
+  const routes: Array<{ method: string; uri: string; uriIndex: number; routeName?: string }> = [];
+  const prefixScopes = scanRoutePrefixScopes(text, filePrefix);
+  const directRouteRegex = /Route::(get|post|put|patch|delete|options|any)\(\s*(['"])([^'"]+)\2/g;
+
+  for (const match of text.matchAll(directRouteRegex)) {
+    if (match.index === undefined || !match[1] || !match[3]) {
+      continue;
+    }
+
+    const statement = routeStatementAfter(text, match.index);
+    const uriIndex = match.index + match[0].lastIndexOf(match[3]);
+    routes.push({
+      method: match[1].toUpperCase(),
+      uri: joinRouteUri(nearestRoutePrefix(prefixScopes, uriIndex) || filePrefix, match[3]),
+      uriIndex,
+      routeName: routeNameFromStatement(statement),
+    });
+  }
+
+  const matchRouteRegex = /Route::match\(\s*\[([^\]]+)\]\s*,\s*(['"])([^'"]+)\2/g;
+  for (const match of text.matchAll(matchRouteRegex)) {
+    if (match.index === undefined || !match[1] || !match[3]) {
+      continue;
+    }
+
+    const statement = routeStatementAfter(text, match.index);
+    const uriIndex = match.index + match[0].lastIndexOf(match[3]);
+    const methods = [...match[1].matchAll(/['"]([A-Za-z]+)['"]/g)].map((methodMatch) => methodMatch[1]?.toUpperCase()).filter(Boolean);
+    for (const method of methods) {
+      routes.push({
+        method,
+        uri: joinRouteUri(nearestRoutePrefix(prefixScopes, uriIndex) || filePrefix, match[3]),
+        uriIndex,
+        routeName: routeNameFromStatement(statement),
+      });
+    }
+  }
+
+  return routes;
+}
+
+function scanRoutePrefixScopes(text: string, filePrefix = ""): Array<{ bodyStart: number; bodyEnd: number; prefix: string }> {
+  const scopes: Array<{ bodyStart: number; bodyEnd: number; prefix: string }> = [];
+  collectRoutePrefixScopes(text, 0, text.length, filePrefix, scopes);
+  return scopes;
+}
+
+function collectRoutePrefixScopes(
+  text: string,
+  start: number,
+  end: number,
+  inheritedPrefix: string,
+  scopes: Array<{ bodyStart: number; bodyEnd: number; prefix: string }>,
+): void {
+  let cursor = start;
+
+  while (cursor < end) {
+    const group = findNextRouteGroup(text, cursor, end);
+    if (!group) {
+      return;
+    }
+
+    const callText = text.slice(group.callStart, group.bodyStart);
+    const prefix = joinRouteUri(inheritedPrefix, extractRoutePrefix(callText) ?? "");
+    if (prefix) {
+      scopes.push({
+        bodyStart: group.bodyStart,
+        bodyEnd: group.bodyEnd,
+        prefix,
+      });
+    }
+
+    collectRoutePrefixScopes(text, group.bodyStart, group.bodyEnd, prefix, scopes);
+    cursor = group.bodyEnd + 1;
+  }
+}
+
+function extractRoutePrefix(callText: string): string | undefined {
+  return (
+    /['"]prefix['"]\s*=>\s*['"]([^'"]+)['"]/.exec(callText)?.[1] ??
+    /(?:Route::|->)prefix\(\s*['"]([^'"]+)['"]\s*\)/.exec(callText)?.[1]
+  );
+}
+
+function nearestRoutePrefix(scopes: Array<{ bodyStart: number; bodyEnd: number; prefix: string }>, offset: number): string {
+  return (
+    scopes
+      .filter((scope) => offset >= scope.bodyStart && offset <= scope.bodyEnd)
+      .sort((a, b) => b.bodyStart - a.bodyStart)[0]?.prefix ?? ""
+  );
+}
+
+function joinRouteUri(prefix: string, uri: string): string {
+  const parts = [prefix, uri]
+    .map((part) => part.trim().replace(/^\/+|\/+$/g, ""))
+    .filter((part) => part.length > 0);
+  return parts.length > 0 ? `/${parts.join("/")}` : "/";
+}
+
+function routeStatementAfter(text: string, start: number): string {
+  const end = text.indexOf(";", start);
+  return text.slice(start, end >= 0 ? end : undefined);
+}
+
+function routeNameFromStatement(statement: string): string | undefined {
+  return /->name\(\s*['"]([^'"]+)['"]\s*\)/.exec(statement)?.[1];
+}
+
+function normalizeRouteUriForIndex(uri: string): string {
+  const normalized = uri.trim().split(/[?#]/)[0]?.replace(/^\/+|\/+$/g, "") ?? "";
+  return normalized ? `/${normalized}` : "/";
+}
+
 function middlewareNameFromReference(value: string): string {
   return value.split(":")[0] ?? value;
 }
@@ -1705,6 +1965,8 @@ function uniqueItems(items: IndexedItem[]): IndexedItem[] {
       item.key,
       item.modelClass ?? "",
       item.table ?? "",
+      item.httpMethod ?? "",
+      item.uri ?? "",
       item.source.file,
       item.routeSource?.file ?? "",
       item.routeSource?.offset ?? "",
