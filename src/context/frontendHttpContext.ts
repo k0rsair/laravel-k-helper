@@ -8,6 +8,8 @@ export interface FrontendHttpRequestReference {
   rangeEnd: number;
 }
 
+export type FrontendUrlAliases = ReadonlyMap<string, string>;
+
 const HTTP_METHODS = "get|post|put|patch|delete|options|head";
 
 export function extractFrontendHttpRequestAtOffset(line: string, offset: number): FrontendHttpRequestReference | undefined {
@@ -66,13 +68,58 @@ export function extractFrontendHttpRequestAtOffset(line: string, offset: number)
   return undefined;
 }
 
-export function extractFrontendHttpRequestsFromLine(line: string): FrontendHttpRequestReference[] {
+export function extractFrontendHttpRequestsFromLine(line: string, aliases: FrontendUrlAliases = new Map()): FrontendHttpRequestReference[] {
   return [
     ...extractFrontendRouteHelperReferences(line),
-    ...extractFrontendMethodCallReferences(line),
-    ...extractFrontendFetchReferences(line),
-    ...extractFrontendObjectCallReferences(line),
+    ...extractFrontendMethodCallReferences(line, aliases),
+    ...extractFrontendFetchReferences(line, aliases),
+    ...extractFrontendObjectCallReferences(line, aliases),
   ];
+}
+
+export function collectFrontendUrlAliases(lines: readonly string[]): Map<string, string> {
+  const aliases = new Map<string, string>();
+  for (let index = 0; index < lines.length; index += 1) {
+    const declaration = frontendUrlAliasDeclaration(lines, index);
+    if (declaration) {
+      aliases.set(declaration.name, declaration.pattern);
+      index = declaration.endLine;
+    }
+  }
+  return aliases;
+}
+
+function frontendUrlAliasDeclaration(lines: readonly string[], startLine: number): { name: string; pattern: string; endLine: number } | undefined {
+  const line = lines[startLine] ?? "";
+  const declaration = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/.exec(line);
+  if (!declaration?.[1] || declaration.index === undefined) {
+    return undefined;
+  }
+
+  const { text, endLine } = joinDeclarationLines(lines, startLine);
+  const expression = expressionUntil(text, declaration.index + declaration[0].length, [";"]);
+  const pattern = expression ? routePatternFromExpression(expression.expression) : undefined;
+  if (!pattern) {
+    return undefined;
+  }
+
+  return {
+    name: declaration[1],
+    pattern,
+    endLine,
+  };
+}
+
+function joinDeclarationLines(lines: readonly string[], startLine: number): { text: string; endLine: number } {
+  const parts: string[] = [];
+  for (let index = startLine; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    parts.push(line);
+    if (line.includes(";")) {
+      return { text: parts.join(" "), endLine: index };
+    }
+  }
+  return { text: parts.join(" "), endLine: lines.length - 1 };
 }
 
 function extractFrontendRouteHelperReferences(line: string): FrontendHttpRequestReference[] {
@@ -93,7 +140,7 @@ function extractFrontendRouteHelperReferences(line: string): FrontendHttpRequest
   return references;
 }
 
-function extractFrontendMethodCallReferences(line: string): FrontendHttpRequestReference[] {
+function extractFrontendMethodCallReferences(line: string, aliases: FrontendUrlAliases): FrontendHttpRequestReference[] {
   const references: FrontendHttpRequestReference[] = [];
   const callRegex = new RegExp(`\\b[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*\\.(${HTTP_METHODS})\\(`, "gi");
   for (const match of line.matchAll(callRegex)) {
@@ -102,7 +149,7 @@ function extractFrontendMethodCallReferences(line: string): FrontendHttpRequestR
     }
     const openParen = match.index + match[0].length - 1;
     const firstArg = firstCallArgument(line, openParen);
-    const pattern = firstArg ? routePatternFromExpression(firstArg.expression) : undefined;
+    const pattern = firstArg ? routePatternFromExpression(firstArg.expression, aliases) : undefined;
     if (!firstArg || !pattern) {
       continue;
     }
@@ -117,7 +164,7 @@ function extractFrontendMethodCallReferences(line: string): FrontendHttpRequestR
   return references;
 }
 
-function extractFrontendFetchReferences(line: string): FrontendHttpRequestReference[] {
+function extractFrontendFetchReferences(line: string, aliases: FrontendUrlAliases): FrontendHttpRequestReference[] {
   const references: FrontendHttpRequestReference[] = [];
   const fetchRegex = /\bfetch\(/g;
   for (const match of line.matchAll(fetchRegex)) {
@@ -126,7 +173,7 @@ function extractFrontendFetchReferences(line: string): FrontendHttpRequestRefere
     }
     const openParen = match.index + match[0].length - 1;
     const firstArg = firstCallArgument(line, openParen);
-    const pattern = firstArg ? routePatternFromExpression(firstArg.expression) : undefined;
+    const pattern = firstArg ? routePatternFromExpression(firstArg.expression, aliases) : undefined;
     if (!firstArg || !pattern) {
       continue;
     }
@@ -141,7 +188,7 @@ function extractFrontendFetchReferences(line: string): FrontendHttpRequestRefere
   return references;
 }
 
-function extractFrontendObjectCallReferences(line: string): FrontendHttpRequestReference[] {
+function extractFrontendObjectCallReferences(line: string, aliases: FrontendUrlAliases): FrontendHttpRequestReference[] {
   const references: FrontendHttpRequestReference[] = [];
   const urlRegex = /\burl\s*:/g;
   for (const match of line.matchAll(urlRegex)) {
@@ -154,7 +201,7 @@ function extractFrontendObjectCallReferences(line: string): FrontendHttpRequestR
     }
 
     const expression = expressionAfterColon(line, match.index + match[0].length);
-    const pattern = expression ? routePatternFromExpression(expression.expression) : undefined;
+    const pattern = expression ? routePatternFromExpression(expression.expression, aliases) : undefined;
     if (!expression || !pattern) {
       continue;
     }
@@ -267,10 +314,15 @@ function cleanExpression(line: string, start: number, rawEnd: number): { express
   return { expression: line.slice(start, end), start, end };
 }
 
-export function routePatternFromExpression(expression: string): string | undefined {
+export function routePatternFromExpression(expression: string, aliases: FrontendUrlAliases = new Map()): string | undefined {
   const trimmed = expression.trim();
   if (!trimmed) {
     return undefined;
+  }
+
+  const alias = aliases.get(trimmed);
+  if (alias) {
+    return alias;
   }
 
   if (trimmed.startsWith("`") && trimmed.endsWith("`")) {

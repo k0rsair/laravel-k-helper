@@ -43,7 +43,6 @@ export class LaravelIndex {
 
     const [
       routes,
-      httpRoutes,
       views,
       config,
       translations,
@@ -59,7 +58,6 @@ export class LaravelIndex {
       ecosystemItems,
     ] = await Promise.all([
       scanRoutes(this.projectRoot, this.logger),
-      scanHttpRoutes(this.projectRoot, this.logger),
       scanViews(this.projectRoot, this.logger),
       scanConfig(this.projectRoot, this.logger),
       scanTranslations(this.projectRoot, this.logger),
@@ -76,6 +74,7 @@ export class LaravelIndex {
     ]);
     const eloquentIndex = await scanEloquentModels(this.projectRoot, this.logger, databaseSchema.columns);
     const routeControllerScopes = await scanRouteControllerScopes(this.projectRoot, this.logger);
+    const httpRoutes = await scanHttpRoutes(this.projectRoot, this.logger, controllerMethods, routeControllerScopes);
     const routeActions = await scanRouteActions(this.projectRoot, this.logger, controllerMethods, routeControllerScopes);
 
     this.snapshot = {

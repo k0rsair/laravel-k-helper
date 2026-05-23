@@ -158,10 +158,16 @@ export async function scanRoutes(projectRoot: string, logger: Logger): Promise<I
   return uniqueItems(items);
 }
 
-export async function scanHttpRoutes(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+export async function scanHttpRoutes(
+  projectRoot: string,
+  logger: Logger,
+  controllerMethods: IndexedItem[] = [],
+  routeControllerScopes: RouteControllerScope[] = [],
+): Promise<IndexedItem[]> {
   const routesRoot = path.join(projectRoot, "routes");
   const routeFiles = await walkFiles(routesRoot, (file) => file.endsWith(".php"));
   const routeFilePrefixes = await scanRouteFilePrefixes(projectRoot, logger);
+  const methodsByKey = new Map(controllerMethods.map((item) => [item.key, item]));
   const items: IndexedItem[] = [];
 
   for (const file of routeFiles) {
@@ -170,8 +176,11 @@ export async function scanHttpRoutes(projectRoot: string, logger: Logger): Promi
       continue;
     }
 
-    for (const route of scanHttpRouteDeclarations(text, routeFilePrefixes.get(file) ?? "")) {
+    for (const route of scanHttpRouteDeclarations(text, file, routeControllerScopes, routeFilePrefixes.get(file) ?? "")) {
       const item = createItem("http-route", normalizeRouteUriForIndex(route.uri), file, text, route.uriIndex);
+      const target = route.controllerTarget
+        ? methodsByKey.get(`${route.controllerTarget.controllerClass}::${route.controllerTarget.method}`)
+        : undefined;
       items.push({
         ...item,
         label: `${route.method} ${route.uri}`,
@@ -179,6 +188,9 @@ export async function scanHttpRoutes(projectRoot: string, logger: Logger): Promi
         uri: route.uri,
         httpMethod: route.method,
         routeName: route.routeName,
+        controllerClass: route.controllerTarget?.controllerClass,
+        method: route.controllerTarget?.method,
+        controllerSource: target?.source,
       });
     }
   }
@@ -1779,9 +1791,27 @@ function scanBootstrapRouteFilePrefixes(text: string): Array<{ file: string; pre
   return references;
 }
 
-function scanHttpRouteDeclarations(text: string, filePrefix = ""): Array<{ method: string; uri: string; uriIndex: number; routeName?: string }> {
-  const routes: Array<{ method: string; uri: string; uriIndex: number; routeName?: string }> = [];
+function scanHttpRouteDeclarations(
+  text: string,
+  file: string,
+  routeControllerScopes: RouteControllerScope[],
+  filePrefix = "",
+): Array<{
+  method: string;
+  uri: string;
+  uriIndex: number;
+  routeName?: string;
+  controllerTarget?: { controllerClass: string; method: string };
+}> {
+  const routes: Array<{
+    method: string;
+    uri: string;
+    uriIndex: number;
+    routeName?: string;
+    controllerTarget?: { controllerClass: string; method: string };
+  }> = [];
   const prefixScopes = scanRoutePrefixScopes(text, filePrefix);
+  const uses = scanUseStatements(text);
   const directRouteRegex = /Route::(get|post|put|patch|delete|options|any)\(\s*(['"])([^'"]+)\2/g;
 
   for (const match of text.matchAll(directRouteRegex)) {
@@ -1796,6 +1826,7 @@ function scanHttpRouteDeclarations(text: string, filePrefix = ""): Array<{ metho
       uri: joinRouteUri(nearestRoutePrefix(prefixScopes, uriIndex) || filePrefix, match[3]),
       uriIndex,
       routeName: routeNameFromStatement(statement),
+      controllerTarget: httpRouteControllerTarget(statement, uses, routeControllerScopes, file, uriIndex),
     });
   }
 
@@ -1814,11 +1845,146 @@ function scanHttpRouteDeclarations(text: string, filePrefix = ""): Array<{ metho
         uri: joinRouteUri(nearestRoutePrefix(prefixScopes, uriIndex) || filePrefix, match[3]),
         uriIndex,
         routeName: routeNameFromStatement(statement),
+        controllerTarget: httpRouteControllerTarget(statement, uses, routeControllerScopes, file, uriIndex),
+      });
+    }
+  }
+
+  const resourceRouteRegex = /Route::(resource|apiResource)\(\s*(['"])([^'"]+)\2\s*,\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::class/g;
+  for (const match of text.matchAll(resourceRouteRegex)) {
+    if (match.index === undefined || !match[1] || !match[3] || !match[4]) {
+      continue;
+    }
+
+    const statement = routeStatementAfter(text, match.index);
+    const uriIndex = match.index + match[0].lastIndexOf(match[3]);
+    const prefix = nearestRoutePrefix(prefixScopes, uriIndex) || filePrefix;
+    const controllerClass = resolveControllerClass(match[4], uses);
+    const resourceRoutes = expandResourceRoutes(match[3], match[1] === "apiResource");
+
+    for (const route of resourceRoutes) {
+      routes.push({
+        method: route.method,
+        uri: joinRouteUri(prefix, route.uri),
+        uriIndex,
+        routeName: routeNameFromStatement(statement) ?? `${resourceRouteName(match[3])}.${route.action}`,
+        controllerTarget: {
+          controllerClass,
+          method: route.action,
+        },
       });
     }
   }
 
   return routes;
+}
+
+function expandResourceRoutes(resource: string, apiOnly: boolean): Array<{ method: string; uri: string; action: string }> {
+  const parameter = resourceParameterName(resource);
+  const memberUri = joinRouteUri(resource, `{${parameter}}`);
+  const indexRoute = { method: "GET", uri: resource, action: "index" };
+  const storeRoute = { method: "POST", uri: resource, action: "store" };
+  const showRoute = { method: "GET", uri: memberUri, action: "show" };
+  const putUpdateRoute = { method: "PUT", uri: memberUri, action: "update" };
+  const patchUpdateRoute = { method: "PATCH", uri: memberUri, action: "update" };
+  const destroyRoute = { method: "DELETE", uri: memberUri, action: "destroy" };
+  const routes = [indexRoute, storeRoute, showRoute, putUpdateRoute, patchUpdateRoute, destroyRoute];
+
+  if (apiOnly) {
+    return routes;
+  }
+
+  return [
+    indexRoute,
+    { method: "GET", uri: joinRouteUri(resource, "create"), action: "create" },
+    storeRoute,
+    showRoute,
+    { method: "GET", uri: joinRouteUri(memberUri, "edit"), action: "edit" },
+    putUpdateRoute,
+    patchUpdateRoute,
+    destroyRoute,
+  ];
+}
+
+function resourceParameterName(resource: string): string {
+  const segment = resource
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .split("/")
+    .filter(Boolean)
+    .at(-1) ?? "resource";
+  const singular = singularizeResourceSegment(segment);
+  const normalized = singular.replace(/[^A-Za-z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized || "resource";
+}
+
+function singularizeResourceSegment(segment: string): string {
+  if (/ies$/i.test(segment)) {
+    return segment.slice(0, -3) + "y";
+  }
+
+  if (/ses$/i.test(segment)) {
+    return segment.slice(0, -2);
+  }
+
+  if (/s$/i.test(segment) && !/ss$/i.test(segment)) {
+    return segment.slice(0, -1);
+  }
+
+  return segment;
+}
+
+function resourceRouteName(resource: string): string {
+  return resource
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\{([^}]+)\}/g, "$1")
+    .split("/")
+    .filter(Boolean)
+    .join(".");
+}
+
+function httpRouteControllerTarget(
+  statement: string,
+  uses: Map<string, string>,
+  routeControllerScopes: RouteControllerScope[],
+  file: string,
+  offset: number,
+): { controllerClass: string; method: string } | undefined {
+  const arrayAction = /\[\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::class\s*,\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\]/.exec(statement);
+  if (arrayAction?.[1] && arrayAction[2]) {
+    return {
+      controllerClass: resolveControllerClass(arrayAction[1], uses),
+      method: arrayAction[2],
+    };
+  }
+
+  const controllerString = /['"]\\?([A-Za-z_][A-Za-z0-9_\\]*)@([A-Za-z_][A-Za-z0-9_]*)['"]/.exec(statement);
+  if (controllerString?.[1] && controllerString[2]) {
+    return {
+      controllerClass: resolveControllerClass(controllerString[1], uses),
+      method: controllerString[2],
+    };
+  }
+
+  const invokable = /,\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::class\s*\)/.exec(statement);
+  if (invokable?.[1]) {
+    return {
+      controllerClass: resolveControllerClass(invokable[1], uses),
+      method: "__invoke",
+    };
+  }
+
+  const stringAction = /,\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]/.exec(statement);
+  const group = stringAction ? findNearestControllerGroup(routeControllerScopes, file, offset) : undefined;
+  if (stringAction?.[1] && group) {
+    return {
+      controllerClass: group.controllerClass,
+      method: stringAction[1],
+    };
+  }
+
+  return undefined;
 }
 
 function scanRoutePrefixScopes(text: string, filePrefix = ""): Array<{ bodyStart: number; bodyEnd: number; prefix: string }> {

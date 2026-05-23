@@ -2,7 +2,7 @@
   "name": "laravel-k-helper",
   "displayName": "Laravel K Helper",
   "description": "Laravel helpers for Cursor and VS Code.",
-  "version": "0.10.3",
+  "version": "0.10.4",
   "publisher": "k0rsair",
   "repository": {
     "type": "git",

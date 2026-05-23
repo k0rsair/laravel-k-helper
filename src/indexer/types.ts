@@ -12,6 +12,7 @@ export interface IndexedItem {
   source: SourceLocation;
   detail?: string;
   routeSource?: SourceLocation;
+  controllerSource?: SourceLocation;
   controllerClass?: string;
   method?: string;
   modelClass?: string;

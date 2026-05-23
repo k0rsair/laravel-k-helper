@@ -1,9 +1,15 @@
 # Changelog
 
+## 0.10.4
+
+- Added `Route::resource(...)` and `Route::apiResource(...)` expansion for frontend HTTP route matching and controller CodeLens targets.
+
 ## 0.10.3
 
 - Added frontend HTTP route navigation for common `axios`, `fetch`, and Ziggy-style `route(...)` calls.
 - Added clickable frontend route CodeLens hints with support for common concatenated and template literal URLs.
+- Added a second frontend route CodeLens that opens the resolved controller method when available.
+- Added support for simple frontend URL variables passed into `axios` and `fetch` calls.
 - Included route file prefixes from `RouteServiceProvider` and Laravel 11-style routing configuration when matching frontend HTTP targets.
 
 ## 0.10.2

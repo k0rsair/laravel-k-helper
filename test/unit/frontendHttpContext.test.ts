@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  collectFrontendUrlAliases,
   extractFrontendHttpRequestAtOffset,
   extractFrontendHttpRequestsFromLine,
   routePatternFromExpression,
@@ -63,6 +64,41 @@ describe("frontend HTTP context", () => {
         kind: "url",
         value: "/users/{param}/orders",
         method: "PATCH",
+      }),
+    ]);
+  });
+
+  it("resolves request URL variables from simple declarations", () => {
+    const aliases = collectFrontendUrlAliases([
+      "let url_checking_statistic_product = \"/api/dop-product-statistic/\" + this.product_id+'/'+(this.check_group_product ? 1 : 0);",
+      "axios.post(url_checking_statistic_product).then((response) => {})",
+    ]);
+
+    expect(aliases.get("url_checking_statistic_product")).toBe("/api/dop-product-statistic/{param}/{param}");
+    expect(extractFrontendHttpRequestsFromLine("axios.post(url_checking_statistic_product).then((response) => {})", aliases)).toEqual([
+      expect.objectContaining({
+        kind: "url",
+        value: "/api/dop-product-statistic/{param}/{param}",
+        method: "POST",
+      }),
+    ]);
+  });
+
+  it("resolves request URL variables from multiline declarations", () => {
+    const aliases = collectFrontendUrlAliases([
+      "let url_checking_statistic_product =",
+      "  \"/api/dop-product-statistic/\" +",
+      "  this.product_id + '/' +",
+      "  (this.check_group_product ? 1 : 0);",
+      "axios.post(url_checking_statistic_product).then((response) => {})",
+    ]);
+
+    expect(aliases.get("url_checking_statistic_product")).toBe("/api/dop-product-statistic/{param}/{param}");
+    expect(extractFrontendHttpRequestsFromLine("axios.post(url_checking_statistic_product).then((response) => {})", aliases)).toEqual([
+      expect.objectContaining({
+        kind: "url",
+        value: "/api/dop-product-statistic/{param}/{param}",
+        method: "POST",
       }),
     ]);
   });

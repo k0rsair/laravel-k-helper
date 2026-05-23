@@ -29,6 +29,10 @@ describe("Laravel indexing", () => {
       expect.arrayContaining([
         "GET /api/health",
         "POST /api/orders/{order}/cancel",
+        "POST /api/dop-product-statistic/{product}/{group}",
+        "POST /api/product-statistics",
+        "GET /api/product-statistics/{product_statistic}",
+        "PATCH /api/product-statistics/{product_statistic}",
         "PATCH /api/v1/profiles/{profile}",
         "GET /users",
         "POST /users",
@@ -49,6 +53,27 @@ describe("Laravel indexing", () => {
     expect(index.findHttpRouteByRequest("/labels/delivery-1/article-2", "GET")).toMatchObject({
       httpMethod: "GET",
       uri: "/labels/{projectDelivery}/{article}",
+      controllerClass: "App\\Http\\Controllers\\Api\\LabelsController",
+      method: "getLabel",
+    });
+    expect(index.findHttpRouteByRequest("/labels/delivery-1/article-2", "GET")?.controllerSource?.file).toContain("LabelsController.php");
+    expect(index.findHttpRouteByRequest("/labels/delivery-1/article-2", "POST")).toMatchObject({
+      httpMethod: "POST",
+      uri: "/labels/{projectDelivery}/{article}",
+      controllerClass: "App\\Http\\Controllers\\Api\\LabelsController",
+      method: "storeLabel",
+    });
+    expect(index.findHttpRouteByRequest("/array-labels/42", "GET")).toMatchObject({
+      controllerClass: "App\\Http\\Controllers\\Api\\LabelsController",
+      method: "arrayLabel",
+    });
+    expect(index.findHttpRouteByRequest("/legacy-labels/42", "GET")).toMatchObject({
+      controllerClass: "App\\Http\\Controllers\\Api\\LabelsController",
+      method: "legacyLabel",
+    });
+    expect(index.findHttpRouteByRequest("/invokable-labels/42", "GET")).toMatchObject({
+      controllerClass: "App\\Http\\Controllers\\Api\\LabelsController",
+      method: "__invoke",
     });
     expect(index.findHttpRouteByRequest("/labels/{param}/{param}", "POST")).toMatchObject({
       httpMethod: "POST",
@@ -63,6 +88,28 @@ describe("Laravel indexing", () => {
       uri: "/api/orders/{order}/cancel",
       routeName: "api.orders.cancel",
     });
+    expect(index.findHttpRouteByRequest("/api/dop-product-statistic/{param}/{param}", "POST")).toMatchObject({
+      httpMethod: "POST",
+      uri: "/api/dop-product-statistic/{product}/{group}",
+      routeName: "api.dop-product-statistic",
+    });
+    expect(index.findHttpRouteByRequest("/api/product-statistics", "POST")).toMatchObject({
+      httpMethod: "POST",
+      uri: "/api/product-statistics",
+      routeName: "product-statistics.store",
+      controllerClass: "App\\Http\\Controllers\\Api\\ProductStatisticController",
+      method: "store",
+    });
+    expect(index.findHttpRouteByRequest("/api/product-statistics/42", "PATCH")).toMatchObject({
+      httpMethod: "PATCH",
+      uri: "/api/product-statistics/{product_statistic}",
+      routeName: "product-statistics.update",
+      controllerClass: "App\\Http\\Controllers\\Api\\ProductStatisticController",
+      method: "update",
+    });
+    expect(index.findHttpRouteByRequest("/api/product-statistics/42", "PATCH")?.controllerSource?.file).toContain(
+      "ProductStatisticController.php",
+    );
     expect(index.findHttpRouteByRequest("/api/v1/profiles/42", "PATCH")).toMatchObject({
       httpMethod: "PATCH",
       uri: "/api/v1/profiles/{profile}",

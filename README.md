@@ -24,8 +24,8 @@ It is inspired by common Laravel IDE workflows, but it is not affiliated with La
 - Supports project-level `ide.json` completion rules for functions, methods, constructors, array keys, array values, Composer package/version gates, built-in package presets, indexed Laravel values, and static strings.
 - Provides preview generation for common Laravel artifacts such as controllers and form requests without overwriting existing files.
 - Indexes first ecosystem module surfaces for Livewire components, Inertia pages, Filament resources, and Nova resources, with completions/definitions for `@livewire(...)`, `<livewire:...>`, `Livewire::mount(...)`, `Inertia::render(...)`, `Route::inertia(...)`, Filament resource registration calls, and Nova resource registration calls.
-- Shows clickable CodeLens route hints above frontend `axios`, `fetch`, and Ziggy-style `route(...)` request targets in JavaScript, TypeScript, Vue, React, and Svelte files, including common string concatenation and template literal URL patterns.
-- Resolves frontend route targets against PHP route files under `routes/**/*.php`, including route group prefixes and file-level prefixes from `RouteServiceProvider` or Laravel 11-style `bootstrap/app.php` routing configuration.
+- Shows clickable CodeLens route hints above frontend `axios`, `fetch`, and Ziggy-style `route(...)` request targets in JavaScript, TypeScript, Vue, React, and Svelte files, including common string concatenation, template literal URL patterns, and simple URL variables. When a controller action can be resolved, a second CodeLens opens the controller method directly.
+- Resolves frontend route targets against PHP route files under `routes/**/*.php`, including route group prefixes, `Route::resource(...)` / `Route::apiResource(...)`, and file-level prefixes from `RouteServiceProvider` or Laravel 11-style `bootstrap/app.php` routing configuration.
 
 ## Preview Limits
 
@@ -41,7 +41,7 @@ Known limits:
 - Factory state methods are indexed from `database/factories` classes that either declare `protected $model = Model::class` or follow the `ModelFactory` naming convention.
 - Route middleware aliases are indexed from literal `$middlewareAliases`/`$routeMiddleware` arrays and literal `->alias([...])` calls.
 - Ecosystem coverage starts with Livewire class/view components, Inertia pages, Filament resources, and Nova resources; deeper Nova, Filament, and Dusk support is not fully covered yet.
-- Frontend HTTP route navigation currently supports common `axios`/`fetch`/`route(...)` patterns, plus simple string concatenation and template literal URLs. Highly dynamic URLs, package-registered routes, and custom clients may need additional focused coverage.
+- Frontend HTTP route navigation currently supports common `axios`/`fetch`/`route(...)` patterns, plus simple string concatenation, template literal URLs, and conventional resource routes. Highly dynamic URLs, customized resource route options, package-registered routes, and custom clients may need additional focused coverage.
 
 ## Commands
 
@@ -90,7 +90,7 @@ Built-in package presets currently add Laravel filesystem disk completions for c
 For a local VSIX build:
 
 ```bash
-cursor --install-extension /absolute/path/to/laravel-k-helper-0.10.3.vsix
+cursor --install-extension /absolute/path/to/laravel-k-helper-0.10.4.vsix
 ```
 
 Reload Cursor or VS Code after reinstalling. If older local builds are installed under previous names, remove `k0rsair.laravel-k-helper`, `local-dev.laravel-assist`, `local-dev.laravel-aware-vscode`, or `local-dev.laravolve` to avoid duplicate providers.

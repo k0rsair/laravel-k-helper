@@ -1,9 +1,9 @@
 import * as vscode from "vscode";
-import { extractFrontendHttpRequestsFromLine } from "../context/frontendHttpContext";
+import { collectFrontendUrlAliases, extractFrontendHttpRequestsFromLine } from "../context/frontendHttpContext";
 import type { LaravelIndex } from "../indexer";
 import type { Logger } from "../logging/logger";
 
-const FRONTEND_LANGUAGES = new Set(["javascript", "javascriptreact", "typescript", "typescriptreact", "vue", "svelte"]);
+const FRONTEND_HTTP_LENS_LANGUAGES = new Set(["blade", "javascript", "javascriptreact", "typescript", "typescriptreact", "vue", "svelte"]);
 
 export class LaravelCodeLensProvider implements vscode.CodeLensProvider {
   public constructor(
@@ -17,7 +17,7 @@ export class LaravelCodeLensProvider implements vscode.CodeLensProvider {
       return [];
     }
 
-    if (FRONTEND_LANGUAGES.has(document.languageId)) {
+    if (FRONTEND_HTTP_LENS_LANGUAGES.has(document.languageId)) {
       return this.provideFrontendHttpRouteCodeLenses(document, index);
     }
 
@@ -47,15 +47,24 @@ export class LaravelCodeLensProvider implements vscode.CodeLensProvider {
 
   private provideFrontendHttpRouteCodeLenses(document: vscode.TextDocument, index: LaravelIndex): vscode.CodeLens[] {
     const lenses: vscode.CodeLens[] = [];
+    const lines = Array.from({ length: document.lineCount }, (_, lineNumber) => document.lineAt(lineNumber).text);
+    const aliases = collectFrontendUrlAliases(lines);
 
     for (let lineNumber = 0; lineNumber < document.lineCount; lineNumber += 1) {
-      const line = document.lineAt(lineNumber).text;
-      for (const reference of extractFrontendHttpRequestsFromLine(line)) {
+      const line = lines[lineNumber] ?? "";
+      for (const reference of extractFrontendHttpRequestsFromLine(line, aliases)) {
         const item =
           reference.kind === "route-name"
             ? index.findHttpRouteByName(reference.value) ?? index.find("route", reference.value)
             : index.findHttpRouteByRequest(reference.value, reference.method);
         if (!item) {
+          this.logger.debug("[LaravelCodeLensProvider.provide] no frontend HTTP route match", {
+            file: document.uri.fsPath,
+            line: lineNumber,
+            kind: reference.kind,
+            value: reference.value,
+            method: reference.method,
+          });
           continue;
         }
 
@@ -71,6 +80,17 @@ export class LaravelCodeLensProvider implements vscode.CodeLensProvider {
             arguments: [item.source],
           }),
         );
+        if (item.controllerSource) {
+          const controller = item.controllerClass?.split("\\").pop() ?? item.controllerClass;
+          const action = controller && item.method ? `${controller}@${item.method}` : item.detail ?? "controller";
+          lenses.push(
+            new vscode.CodeLens(new vscode.Range(lineNumber, 0, lineNumber, 0), {
+              title: `Controller: ${action}`,
+              command: "laravelKHelper.openSourceLocation",
+              arguments: [item.controllerSource],
+            }),
+          );
+        }
       }
     }
 
