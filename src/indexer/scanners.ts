@@ -23,6 +23,21 @@ export interface EcosystemIndex {
   novaResources: IndexedItem[];
 }
 
+export interface ContainerBindingIndex {
+  bindings: IndexedItem[];
+  methods: IndexedItem[];
+}
+
+interface ResponseFieldMatch {
+  path: string[];
+  index: number;
+}
+
+interface ResponseFieldScanContext {
+  modelVariables: Map<string, string>;
+  fieldsByModel: Map<string, IndexedItem[]>;
+}
+
 interface PhpClassInfo {
   file: string;
   text: string;
@@ -34,6 +49,98 @@ interface PhpClassInfo {
   extendsClass?: string;
   uses: Map<string, string>;
 }
+
+interface RawContainerBinding {
+  abstractClass: string;
+  concreteClass: string;
+  bindingKind: string;
+  file: string;
+  text: string;
+  index: number;
+}
+
+const LARAVEL_CORE_CONTAINER_ALIASES: Record<string, string[]> = {
+  "Illuminate\\Foundation\\Application": [
+    "Illuminate\\Foundation\\Application",
+    "Illuminate\\Contracts\\Container\\Container",
+    "Illuminate\\Contracts\\Foundation\\Application",
+    "Psr\\Container\\ContainerInterface",
+  ],
+  "Illuminate\\Auth\\AuthManager": ["Illuminate\\Auth\\AuthManager", "Illuminate\\Contracts\\Auth\\Factory"],
+  "Illuminate\\Auth\\Passwords\\PasswordBrokerManager": [
+    "Illuminate\\Auth\\Passwords\\PasswordBrokerManager",
+    "Illuminate\\Contracts\\Auth\\PasswordBrokerFactory",
+  ],
+  "Illuminate\\Auth\\Passwords\\PasswordBroker": [
+    "Illuminate\\Auth\\Passwords\\PasswordBroker",
+    "Illuminate\\Contracts\\Auth\\PasswordBroker",
+  ],
+  "Illuminate\\Cache\\CacheManager": ["Illuminate\\Cache\\CacheManager", "Illuminate\\Contracts\\Cache\\Factory"],
+  "Illuminate\\Cache\\Repository": [
+    "Illuminate\\Cache\\Repository",
+    "Illuminate\\Contracts\\Cache\\Repository",
+    "Psr\\SimpleCache\\CacheInterface",
+  ],
+  "Illuminate\\Config\\Repository": ["Illuminate\\Config\\Repository", "Illuminate\\Contracts\\Config\\Repository"],
+  "Illuminate\\Cookie\\CookieJar": [
+    "Illuminate\\Cookie\\CookieJar",
+    "Illuminate\\Contracts\\Cookie\\Factory",
+    "Illuminate\\Contracts\\Cookie\\QueueingFactory",
+  ],
+  "Illuminate\\Database\\DatabaseManager": [
+    "Illuminate\\Database\\DatabaseManager",
+    "Illuminate\\Database\\ConnectionResolverInterface",
+  ],
+  "Illuminate\\Database\\Connection": ["Illuminate\\Database\\Connection", "Illuminate\\Database\\ConnectionInterface"],
+  "Illuminate\\Encryption\\Encrypter": [
+    "Illuminate\\Encryption\\Encrypter",
+    "Illuminate\\Contracts\\Encryption\\Encrypter",
+    "Illuminate\\Contracts\\Encryption\\StringEncrypter",
+  ],
+  "Illuminate\\Events\\Dispatcher": ["Illuminate\\Events\\Dispatcher", "Illuminate\\Contracts\\Events\\Dispatcher"],
+  "Illuminate\\Filesystem\\FilesystemManager": [
+    "Illuminate\\Filesystem\\FilesystemManager",
+    "Illuminate\\Contracts\\Filesystem\\Factory",
+  ],
+  "Illuminate\\Contracts\\Filesystem\\Filesystem": ["Illuminate\\Contracts\\Filesystem\\Filesystem"],
+  "Illuminate\\Contracts\\Filesystem\\Cloud": ["Illuminate\\Contracts\\Filesystem\\Cloud"],
+  "Illuminate\\Contracts\\Hashing\\Hasher": ["Illuminate\\Contracts\\Hashing\\Hasher"],
+  "Illuminate\\Log\\LogManager": ["Illuminate\\Log\\LogManager", "Psr\\Log\\LoggerInterface"],
+  "Illuminate\\Mail\\MailManager": ["Illuminate\\Mail\\MailManager", "Illuminate\\Contracts\\Mail\\Factory"],
+  "Illuminate\\Mail\\Mailer": [
+    "Illuminate\\Mail\\Mailer",
+    "Illuminate\\Contracts\\Mail\\Mailer",
+    "Illuminate\\Contracts\\Mail\\MailQueue",
+  ],
+  "Illuminate\\Queue\\QueueManager": [
+    "Illuminate\\Queue\\QueueManager",
+    "Illuminate\\Contracts\\Queue\\Factory",
+    "Illuminate\\Contracts\\Queue\\Monitor",
+  ],
+  "Illuminate\\Contracts\\Queue\\Queue": ["Illuminate\\Contracts\\Queue\\Queue"],
+  "Illuminate\\Redis\\RedisManager": ["Illuminate\\Redis\\RedisManager", "Illuminate\\Contracts\\Redis\\Factory"],
+  "Illuminate\\Redis\\Connections\\Connection": [
+    "Illuminate\\Redis\\Connections\\Connection",
+    "Illuminate\\Contracts\\Redis\\Connection",
+  ],
+  "Illuminate\\Http\\Request": ["Illuminate\\Http\\Request", "Symfony\\Component\\HttpFoundation\\Request"],
+  "Illuminate\\Routing\\Router": [
+    "Illuminate\\Routing\\Router",
+    "Illuminate\\Contracts\\Routing\\Registrar",
+    "Illuminate\\Contracts\\Routing\\BindingRegistrar",
+  ],
+  "Illuminate\\Session\\Store": ["Illuminate\\Session\\Store", "Illuminate\\Contracts\\Session\\Session"],
+  "Illuminate\\Translation\\Translator": [
+    "Illuminate\\Translation\\Translator",
+    "Illuminate\\Contracts\\Translation\\Translator",
+  ],
+  "Illuminate\\Routing\\UrlGenerator": [
+    "Illuminate\\Routing\\UrlGenerator",
+    "Illuminate\\Contracts\\Routing\\UrlGenerator",
+  ],
+  "Illuminate\\Validation\\Factory": ["Illuminate\\Validation\\Factory", "Illuminate\\Contracts\\Validation\\Factory"],
+  "Illuminate\\View\\Factory": ["Illuminate\\View\\Factory", "Illuminate\\Contracts\\View\\Factory"],
+};
 
 const BUILT_IN_VALIDATION_RULES = [
   "accepted",
@@ -201,6 +308,150 @@ export async function scanHttpRoutes(
     items: items.length,
   });
   return uniqueItems(items);
+}
+
+export async function scanResponseFields(
+  projectRoot: string,
+  logger: Logger,
+  httpRoutes: IndexedItem[],
+  controllerMethods: IndexedItem[],
+  routeControllerScopes: RouteControllerScope[] = [],
+  eloquentFields: IndexedItem[] = [],
+  eloquentModels: IndexedItem[] = [],
+): Promise<IndexedItem[]> {
+  const fieldsByModel = responseFieldsByModel(eloquentFields);
+  const modelClasses = new Set(eloquentModels.map((item) => item.modelClass ?? item.key));
+  const routeFields = await scanRouteClosureResponseFields(projectRoot, logger, httpRoutes, routeControllerScopes, fieldsByModel, modelClasses);
+  const controllerFields = await scanControllerResponseFields(projectRoot, logger, httpRoutes, controllerMethods, fieldsByModel, modelClasses);
+  const items = uniqueItems([...routeFields, ...controllerFields]);
+
+  logger.debug("[LaravelIndex.scanResponseFields] completed", {
+    routeFields: routeFields.length,
+    controllerFields: controllerFields.length,
+    items: items.length,
+  });
+
+  return items;
+}
+
+async function scanRouteClosureResponseFields(
+  projectRoot: string,
+  logger: Logger,
+  httpRoutes: IndexedItem[],
+  routeControllerScopes: RouteControllerScope[],
+  fieldsByModel: Map<string, IndexedItem[]>,
+  modelClasses: Set<string>,
+): Promise<IndexedItem[]> {
+  const routesRoot = path.join(projectRoot, "routes");
+  const routeFiles = await walkFiles(routesRoot, (file) => file.endsWith(".php"));
+  const routeFilePrefixes = await scanRouteFilePrefixes(projectRoot, logger);
+  const items: IndexedItem[] = [];
+  let skippedDynamic = 0;
+  let attachmentMisses = 0;
+
+  for (const file of routeFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+
+    const uses = scanUseStatements(text);
+    for (const route of scanHttpRouteDeclarations(text, file, routeControllerScopes, routeFilePrefixes.get(file) ?? "")) {
+      if (route.controllerTarget) {
+        continue;
+      }
+
+      const statement = routeStatementAfter(text, route.uriIndex);
+      const fields = scanResponseFieldsFromStatement(text, statement, route.uriIndex, {
+        fieldsByModel,
+        modelVariables: modelVariablesFromRouteClosure(statement, uses, modelClasses),
+      });
+      if (fields.length === 0) {
+        skippedDynamic += 1;
+        continue;
+      }
+
+      const httpRoute = httpRoutes.find((item) => item.source.file === file && item.uri === route.uri && item.httpMethod === route.method);
+      if (!httpRoute) {
+        attachmentMisses += 1;
+        continue;
+      }
+
+      items.push(...fields.map((field) => createResponseFieldItem(field, file, text, httpRoute)));
+    }
+  }
+
+  logger.debug("[LaravelIndex.scanResponseFields] route closure scan", {
+    files: routeFiles.length,
+    items: items.length,
+    skippedDynamic,
+    attachmentMisses,
+  });
+
+  return items;
+}
+
+async function scanControllerResponseFields(
+  projectRoot: string,
+  logger: Logger,
+  httpRoutes: IndexedItem[],
+  controllerMethods: IndexedItem[],
+  fieldsByModel: Map<string, IndexedItem[]>,
+  modelClasses: Set<string>,
+): Promise<IndexedItem[]> {
+  const controllersRoot = path.join(projectRoot, "app", "Http", "Controllers");
+  const controllerFiles = await walkFiles(controllersRoot, (file) => file.endsWith(".php"));
+  const items: IndexedItem[] = [];
+  let skippedDynamic = 0;
+  let attachmentMisses = 0;
+
+  for (const file of controllerFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+
+    const classInfo = scanPhpClassInfo(file, text);
+    const namespace = classInfo?.namespace ?? /namespace\s+([^;]+);/.exec(text)?.[1] ?? "";
+    const uses = classInfo?.uses ?? scanUseStatements(text);
+    for (const methodBody of scanControllerMethodBodies(text)) {
+      const controllerMethod = controllerMethods.find((item) => item.source.file === file && item.method === methodBody.method);
+      if (!controllerMethod?.controllerClass) {
+        attachmentMisses += 1;
+        continue;
+      }
+
+      const routes = httpRoutes.filter(
+        (item) => item.controllerClass === controllerMethod.controllerClass && item.method === methodBody.method,
+      );
+      if (routes.length === 0) {
+        attachmentMisses += 1;
+        continue;
+      }
+
+      const fields = scanResponseFieldsFromStatement(text, methodBody.body, methodBody.bodyOffset, {
+        fieldsByModel,
+        modelVariables: modelVariablesFromParams(methodBody.params, namespace, uses, modelClasses),
+      });
+      if (fields.length === 0) {
+        skippedDynamic += 1;
+        continue;
+      }
+
+      for (const route of routes) {
+        items.push(...fields.map((field) => createResponseFieldItem(field, file, text, route)));
+      }
+    }
+  }
+
+  logger.debug("[LaravelIndex.scanResponseFields] controller scan", {
+    files: controllerFiles.length,
+    items: items.length,
+    skippedDynamic,
+    attachmentMisses,
+  });
+
+  return items;
 }
 
 export async function scanViews(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
@@ -395,6 +646,117 @@ export async function scanEloquentModels(
     relations: uniqueItems(relations),
     scopes: uniqueItems(scopes),
     factoryStates: uniqueItems(factoryStates),
+  };
+}
+
+export async function scanContainerBindings(projectRoot: string, logger: Logger): Promise<ContainerBindingIndex> {
+  const providerFiles = await collectServiceProviderFiles(projectRoot);
+  const appFiles = await walkFiles(path.join(projectRoot, "app"), (file) => file.endsWith(".php"));
+  const phpClasses: PhpClassInfo[] = [];
+  const rawBindings: RawContainerBinding[] = [];
+  let skippedUnsupported = 0;
+
+  for (const file of appFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+    const classInfo = scanPhpClassInfo(file, text);
+    if (classInfo) {
+      phpClasses.push(classInfo);
+    }
+  }
+
+  const presetBindings = await laravelCorePresetContainerBindings(projectRoot);
+
+  for (const file of candidateConcreteClassFiles(projectRoot, presetBindings)) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+    const classInfo = scanPhpClassInfo(file, text);
+    if (classInfo) {
+      phpClasses.push(classInfo);
+    }
+  }
+
+  const classesByName = new Map(phpClasses.map((phpClass) => [phpClass.fqn, phpClass]));
+
+  for (const file of providerFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+
+    const namespace = /namespace\s+([^;]+);/.exec(text)?.[1] ?? "App\\Providers";
+    const uses = scanUseStatements(text);
+    const bindings = scanSimpleContainerBindings(text, file, namespace, uses);
+    rawBindings.push(...bindings);
+
+    const unsupported = countUnsupportedContainerBindingCalls(text, bindings);
+    skippedUnsupported += unsupported;
+    if (unsupported > 0) {
+      logger.debug("[LaravelIndex.scanContainerBindings] skipped unsupported binding calls", {
+        file,
+        skipped: unsupported,
+      });
+    }
+  }
+
+  rawBindings.push(...presetBindings);
+
+  const bindings: IndexedItem[] = rawBindings.map((binding) => {
+    const concreteClass = classesByName.get(binding.concreteClass);
+    if (!concreteClass) {
+      logger.debug("[LaravelIndex.scanContainerBindings] concrete class not indexed", {
+        abstractClass: binding.abstractClass,
+        concreteClass: binding.concreteClass,
+      });
+    }
+
+    return {
+      ...createItem("container-binding", binding.abstractClass, binding.file, binding.text, binding.index),
+      label: binding.abstractClass,
+      detail: `${binding.bindingKind}: ${binding.abstractClass} -> ${binding.concreteClass}`,
+      abstractClass: binding.abstractClass,
+      concreteClass: binding.concreteClass,
+      bindingKind: binding.bindingKind,
+      concreteSource: concreteClass
+        ? offsetToSourceLocation(concreteClass.file, concreteClass.text, concreteClass.classNameIndex)
+        : undefined,
+    };
+  });
+
+  const boundConcreteClasses = new Set(rawBindings.map((binding) => binding.concreteClass));
+  const methods: IndexedItem[] = [];
+  for (const classInfo of phpClasses) {
+    if (!boundConcreteClasses.has(classInfo.fqn)) {
+      continue;
+    }
+
+    for (const method of scanPublicPhpMethods(classInfo.text)) {
+      methods.push({
+        ...createItem("container-method", `${classInfo.fqn}::${method.name}`, classInfo.file, classInfo.text, method.index),
+        label: method.name,
+        detail: `${classInfo.fqn}::${method.name}`,
+        concreteClass: classInfo.fqn,
+        method: method.name,
+      });
+    }
+  }
+
+  logger.debug("[LaravelIndex.scanContainerBindings] completed", {
+    providerFiles: providerFiles.length,
+    appClasses: phpClasses.length,
+    presetBindings: presetBindings.length,
+    bindings: bindings.length,
+    methods: methods.length,
+    skippedUnsupported,
+  });
+
+  return {
+    bindings: uniqueItems(bindings),
+    methods: uniqueItems(methods),
   };
 }
 
@@ -727,6 +1089,60 @@ export async function scanControllerMethods(projectRoot: string, logger: Logger)
   return uniqueItems(items);
 }
 
+export async function scanArtisanCommands(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+  const appFiles = await walkFiles(path.join(projectRoot, "app"), (file) => file.endsWith(".php"));
+  const items: IndexedItem[] = [];
+
+  for (const file of appFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+
+    const classInfo = scanPhpClassInfo(file, text);
+    if (!classInfo || !isArtisanCommandClass(classInfo)) {
+      continue;
+    }
+
+    for (const command of scanArtisanCommandDeclarations(text)) {
+      items.push({
+        ...createItem("artisan-command", command.name, file, text, classInfo.classNameIndex),
+        detail: `Artisan command ${classInfo.fqn}`,
+        commandClass: classInfo.fqn,
+      });
+    }
+  }
+
+  logger.debug("[LaravelIndex.scanArtisanCommands] completed", {
+    files: appFiles.length,
+    items: items.length,
+  });
+  return uniqueItems(items);
+}
+
+function scanControllerMethodBodies(text: string): Array<{ method: string; params: string; body: string; bodyOffset: number }> {
+  const methods: Array<{ method: string; params: string; body: string; bodyOffset: number }> = [];
+  for (const match of text.matchAll(/\bpublic\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?::\s*[^{]+)?\{/g)) {
+    if (!match[1] || match.index === undefined) {
+      continue;
+    }
+
+    const openBrace = match.index + match[0].length - 1;
+    const closeBrace = findMatchingBrace(text, openBrace, text.length);
+    if (closeBrace < 0) {
+      continue;
+    }
+
+    methods.push({
+      method: match[1],
+      params: match[2] ?? "",
+      body: text.slice(openBrace + 1, closeBrace),
+      bodyOffset: openBrace + 1,
+    });
+  }
+  return methods;
+}
+
 export async function scanRouteActions(
   projectRoot: string,
   logger: Logger,
@@ -823,6 +1239,236 @@ function scanPhpArrayKeyPaths(text: string): Array<{ value: string; index: numbe
   }
 
   return keys;
+}
+
+function scanResponseFieldsFromStatement(
+  fileText: string,
+  statement: string,
+  statementOffset: number,
+  context?: ResponseFieldScanContext,
+): ResponseFieldMatch[] {
+  const fields: ResponseFieldMatch[] = [];
+
+  for (const match of statement.matchAll(/response\(\)->json\(\s*\[/g)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    const openBracket = statementOffset + match.index + match[0].lastIndexOf("[");
+    const closeBracket = findMatchingSquareBracket(fileText, openBracket, fileText.length);
+    if (closeBracket >= 0) {
+      fields.push(...scanPhpArrayLiteralKeyPaths(fileText, openBracket, closeBracket, [], context));
+    }
+  }
+
+  for (const match of statement.matchAll(/\breturn\s*\[/g)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    const openBracket = statementOffset + match.index + match[0].lastIndexOf("[");
+    const closeBracket = findMatchingSquareBracket(fileText, openBracket, fileText.length);
+    if (closeBracket >= 0) {
+      fields.push(...scanPhpArrayLiteralKeyPaths(fileText, openBracket, closeBracket, [], context));
+    }
+  }
+
+  for (const match of statement.matchAll(/\bcollect\(\s*\[/g)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    const openBracket = statementOffset + match.index + match[0].lastIndexOf("[");
+    const closeBracket = findMatchingSquareBracket(fileText, openBracket, fileText.length);
+    if (closeBracket >= 0) {
+      fields.push(...scanPhpArrayLiteralKeyPaths(fileText, openBracket, closeBracket, [], context));
+    }
+  }
+
+  for (const match of statement.matchAll(/\bfn\s*\([^)]*\)\s*=>\s*\[/g)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    const openBracket = statementOffset + match.index + match[0].lastIndexOf("[");
+    const closeBracket = findMatchingSquareBracket(fileText, openBracket, fileText.length);
+    if (closeBracket >= 0) {
+      fields.push(...scanPhpArrayLiteralKeyPaths(fileText, openBracket, closeBracket, [], context));
+    }
+  }
+
+  return uniqueResponseFields(fields);
+}
+
+function scanPhpArrayLiteralKeyPaths(
+  text: string,
+  openBracket: number,
+  closeBracket: number,
+  parentPath: string[] = [],
+  context?: ResponseFieldScanContext,
+): ResponseFieldMatch[] {
+  const fields: ResponseFieldMatch[] = [];
+  let index = openBracket + 1;
+
+  while (index < closeBracket) {
+    const key = phpArrayLiteralKeyAt(text, index, closeBracket);
+    if (!key) {
+      index += 1;
+      continue;
+    }
+
+    const pathParts = [...parentPath, key.value];
+    fields.push({ path: pathParts, index: key.index });
+
+    const valueStart = skipWhitespace(text, key.valueStart, closeBracket);
+    if (text[valueStart] === "[") {
+      const nestedClose = findMatchingSquareBracket(text, valueStart, closeBracket);
+      if (nestedClose > valueStart) {
+        fields.push(...scanPhpArrayLiteralKeyPaths(text, valueStart, nestedClose, pathParts, context));
+        index = nestedClose + 1;
+        continue;
+      }
+    }
+
+    fields.push(...responseModelFieldMatches(text, valueStart, closeBracket, pathParts, key.index, context));
+    index = key.valueStart + 1;
+  }
+
+  return fields;
+}
+
+function responseFieldsByModel(eloquentFields: IndexedItem[]): Map<string, IndexedItem[]> {
+  const fieldsByModel = new Map<string, IndexedItem[]>();
+  for (const field of eloquentFields) {
+    if (!field.modelClass) {
+      continue;
+    }
+    fieldsByModel.set(field.modelClass, [...(fieldsByModel.get(field.modelClass) ?? []), field]);
+  }
+  return fieldsByModel;
+}
+
+function responseModelFieldMatches(
+  text: string,
+  valueStart: number,
+  end: number,
+  parentPath: string[],
+  fallbackIndex: number,
+  context?: ResponseFieldScanContext,
+): ResponseFieldMatch[] {
+  if (!context) {
+    return [];
+  }
+
+  const variable = phpVariableAt(text, valueStart, end);
+  const modelClass = variable ? context.modelVariables.get(variable) : undefined;
+  if (!modelClass) {
+    return [];
+  }
+
+  const fields = context.fieldsByModel.get(modelClass) ?? [];
+  return fields.map((field) => ({
+    path: [...parentPath, field.key],
+    index: field.source.offset ?? fallbackIndex,
+  }));
+}
+
+function phpVariableAt(text: string, index: number, end: number): string | undefined {
+  const match = /^\$([A-Za-z_][A-Za-z0-9_]*)\b/.exec(text.slice(index, end));
+  return match?.[1];
+}
+
+function modelVariablesFromRouteClosure(statement: string, uses: Map<string, string>, modelClasses: Set<string>): Map<string, string> {
+  const params =
+    /\bfn\s*\(([^)]*)\)\s*=>/.exec(statement)?.[1] ??
+    /\bfunction\s*\(([^)]*)\)/.exec(statement)?.[1] ??
+    "";
+
+  return modelVariablesFromParams(params, "", uses, modelClasses);
+}
+
+function modelVariablesFromParams(
+  params: string,
+  namespace: string,
+  uses: Map<string, string>,
+  modelClasses: Set<string>,
+): Map<string, string> {
+  const variables = new Map<string, string>();
+  for (const param of params.split(",")) {
+    const match = /(?:^|\s)(?:\?)?\\?([A-Za-z_][A-Za-z0-9_\\]*)(?:\|null)?\s+\$([A-Za-z_][A-Za-z0-9_]*)\b/.exec(param.trim());
+    if (!match?.[1] || !match[2]) {
+      continue;
+    }
+
+    const modelClass = resolvePhpClassReference(match[1], namespace, uses);
+    if (modelClasses.has(modelClass)) {
+      variables.set(match[2], modelClass);
+    }
+  }
+  return variables;
+}
+
+function phpArrayLiteralKeyAt(
+  text: string,
+  index: number,
+  end: number,
+): { value: string; index: number; valueStart: number } | undefined {
+  let cursor = skipWhitespace(text, index, end);
+  const quote = text[cursor];
+  if (quote !== "'" && quote !== '"') {
+    return undefined;
+  }
+
+  const keyStart = cursor + 1;
+  cursor += 1;
+  let escaped = false;
+  while (cursor < end) {
+    const char = text[cursor];
+    if (escaped) {
+      escaped = false;
+    } else if (char === "\\") {
+      escaped = true;
+    } else if (char === quote) {
+      break;
+    }
+    cursor += 1;
+  }
+
+  if (cursor >= end || text[cursor] !== quote) {
+    return undefined;
+  }
+
+  const value = text.slice(keyStart, cursor);
+  if (!/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(value)) {
+    return undefined;
+  }
+
+  cursor = skipWhitespace(text, cursor + 1, end);
+  if (text[cursor] !== "=" || text[cursor + 1] !== ">") {
+    return undefined;
+  }
+
+  return {
+    value,
+    index: keyStart,
+    valueStart: cursor + 2,
+  };
+}
+
+function skipWhitespace(text: string, index: number, end: number): number {
+  let cursor = index;
+  while (cursor < end && /\s/.test(text[cursor] ?? "")) {
+    cursor += 1;
+  }
+  return cursor;
+}
+
+function uniqueResponseFields(fields: ResponseFieldMatch[]): ResponseFieldMatch[] {
+  const seen = new Set<string>();
+  return fields.filter((field) => {
+    const key = field.path.join(".");
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function scanJsonKeys(text: string): Array<{ value: string; index: number }> {
@@ -952,6 +1598,199 @@ function scanPhpClassInfo(file: string, text: string): PhpClassInfo | undefined 
     extendsClass: classMatch[2] ? resolveExtendsClass(classMatch[2], namespace, uses) : undefined,
     uses,
   };
+}
+
+function isArtisanCommandClass(classInfo: PhpClassInfo): boolean {
+  return (
+    classInfo.extendsClass === "Illuminate\\Console\\Command" ||
+    /[/\\]app[/\\]Console[/\\]Commands[/\\]/.test(classInfo.file)
+  );
+}
+
+function scanArtisanCommandDeclarations(text: string): Array<{ name: string; index: number }> {
+  const commands: Array<{ name: string; index: number }> = [];
+  const propertyRegex = /\bprotected\s+(?:static\s+)?(?:string\s+)?\$(signature|name)\s*=\s*(['"])([^'"]+)\2/g;
+
+  for (const match of text.matchAll(propertyRegex)) {
+    if (match.index === undefined || !match[1] || !match[3]) {
+      continue;
+    }
+
+    const rawValue = match[3].trim();
+    const commandName = match[1] === "signature" ? rawValue.split(/\s+/)[0] : rawValue;
+    if (!commandName || !/^[A-Za-z0-9_.:-]+$/.test(commandName)) {
+      continue;
+    }
+
+    commands.push({
+      name: commandName,
+      index: match.index + match[0].indexOf(match[3]),
+    });
+  }
+
+  return commands;
+}
+
+async function collectServiceProviderFiles(projectRoot: string): Promise<string[]> {
+  const files = new Set(await walkFiles(path.join(projectRoot, "app", "Providers"), (file) => file.endsWith(".php")));
+  const configAppFile = path.join(projectRoot, "config", "app.php");
+  const configAppText = await readTextFile(configAppFile);
+  if (!configAppText) {
+    return [...files].sort();
+  }
+
+  for (const match of configAppText.matchAll(/\\?([A-Za-z_][A-Za-z0-9_\\]*)::class/g)) {
+    const className = match[1];
+    if (!className?.startsWith("App\\")) {
+      continue;
+    }
+    files.add(path.join(projectRoot, `${className.replace(/^App\\/, "app\\").replace(/\\/g, path.sep)}.php`));
+  }
+
+  return [...files].sort();
+}
+
+async function laravelCorePresetContainerBindings(projectRoot: string): Promise<RawContainerBinding[]> {
+  const sourceFile = path.join(projectRoot, "vendor", "laravel", "framework", "src", "Illuminate", "Foundation", "Application.php");
+  const fallbackFile = path.join(projectRoot, "composer.json");
+  const sourceFileText = await readTextFile(sourceFile);
+  const fallbackText = await readTextFile(fallbackFile);
+  const source = sourceFileText !== undefined
+    ? { file: sourceFile, text: sourceFileText }
+    : { file: fallbackFile, text: fallbackText ?? "" };
+  const bindings: RawContainerBinding[] = [];
+
+  for (const [concreteClass, aliases] of Object.entries(LARAVEL_CORE_CONTAINER_ALIASES)) {
+    for (const abstractClass of aliases) {
+      if (abstractClass === concreteClass) {
+        continue;
+      }
+      bindings.push({
+        abstractClass,
+        concreteClass,
+        bindingKind: "laravel-core-alias",
+        file: source.file,
+        text: source.text,
+        index: Math.max(0, source.text.indexOf(abstractClass.replace(/\\/g, "\\\\"))),
+      });
+    }
+  }
+
+  return bindings;
+}
+
+function candidateConcreteClassFiles(projectRoot: string, bindings: RawContainerBinding[]): string[] {
+  const files = new Set<string>();
+  for (const binding of bindings) {
+    const file = phpClassFile(projectRoot, binding.concreteClass);
+    if (file) {
+      files.add(file);
+    }
+  }
+  return [...files].sort();
+}
+
+function phpClassFile(projectRoot: string, className: string): string | undefined {
+  if (className.startsWith("Illuminate\\")) {
+    return path.join(
+      projectRoot,
+      "vendor",
+      "laravel",
+      "framework",
+      "src",
+      "Illuminate",
+      `${className.slice("Illuminate\\".length).replace(/\\/g, path.sep)}.php`,
+    );
+  }
+  if (className.startsWith("Symfony\\Component\\")) {
+    return path.join(projectRoot, "vendor", "symfony", className.slice("Symfony\\Component\\".length).replace(/\\/g, path.sep) + ".php");
+  }
+  return undefined;
+}
+
+function scanSimpleContainerBindings(
+  text: string,
+  file: string,
+  namespace: string,
+  uses: Map<string, string>,
+): RawContainerBinding[] {
+  const bindings: RawContainerBinding[] = [];
+  const classBindingRegex =
+    /(?:(?:\$this->app|app\(\))->|(?:\\?App)::)(bind|singleton|scoped|bindIf|singletonIf)\s*\(\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::class\s*,\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::class/g;
+  const arrowFactoryBindingRegex =
+    /(?:(?:\$this->app|app\(\))->|(?:\\?App)::)(bind|singleton|scoped|bindIf|singletonIf)\s*\(\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::class\s*,\s*(?:static\s+)?fn\s*\([^)]*\)\s*=>\s*new\s+\\?([A-Za-z_][A-Za-z0-9_\\]*)\b/g;
+  const closureFactoryBindingRegex =
+    /(?:(?:\$this->app|app\(\))->|(?:\\?App)::)(bind|singleton|scoped|bindIf|singletonIf)\s*\(\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::class\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{[\s\S]*?\breturn\s+new\s+\\?([A-Za-z_][A-Za-z0-9_\\]*)\b/g;
+
+  for (const match of text.matchAll(classBindingRegex)) {
+    addContainerBindingMatch(bindings, match, file, text, namespace, uses);
+  }
+  for (const match of text.matchAll(arrowFactoryBindingRegex)) {
+    addContainerBindingMatch(bindings, match, file, text, namespace, uses);
+  }
+  for (const match of text.matchAll(closureFactoryBindingRegex)) {
+    addContainerBindingMatch(bindings, match, file, text, namespace, uses);
+  }
+
+  return bindings;
+}
+
+function addContainerBindingMatch(
+  bindings: RawContainerBinding[],
+  match: RegExpMatchArray,
+  file: string,
+  text: string,
+  namespace: string,
+  uses: Map<string, string>,
+): void {
+    if (match.index === undefined || !match[1] || !match[2] || !match[3]) {
+    return;
+    }
+
+    bindings.push({
+      abstractClass: resolvePhpClassReference(match[2], namespace, uses),
+      concreteClass: resolvePhpClassReference(match[3], namespace, uses),
+      bindingKind: match[1],
+      file,
+      text,
+      index: match.index + match[0].indexOf(match[2]),
+    });
+}
+
+function countUnsupportedContainerBindingCalls(text: string, supportedBindings: RawContainerBinding[]): number {
+  const supportedIndexes = new Set(supportedBindings.map((binding) => binding.index));
+  const bindingCallRegex = /(?:(?:\$this->app|app\(\))->|(?:\\?App)::)(?:bind|singleton|scoped|bindIf|singletonIf)\s*\(/g;
+  let unsupported = 0;
+
+  for (const match of text.matchAll(bindingCallRegex)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    const alreadySupported = [...supportedIndexes].some((index) => index >= match.index && index < match.index + match[0].length + 180);
+    if (!alreadySupported) {
+      unsupported += 1;
+    }
+  }
+
+  return unsupported;
+}
+
+function scanPublicPhpMethods(text: string): Array<{ name: string; index: number }> {
+  const methods: Array<{ name: string; index: number }> = [];
+  const methodRegex = /\bpublic\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+
+  for (const match of text.matchAll(methodRegex)) {
+    if (match.index === undefined || !match[1] || (match[1].startsWith("__") && match[1] !== "__invoke")) {
+      continue;
+    }
+
+    methods.push({
+      name: match[1],
+      index: match.index + match[0].indexOf(match[1]),
+    });
+  }
+
+  return methods;
 }
 
 function isEloquentClassInfo(
@@ -1221,6 +2060,10 @@ function scanPhpArrayKeys(text: string, offset: number): Array<{ value: string; 
 }
 
 function resolveModelClass(className: string, namespace: string, uses: Map<string, string>): string {
+  return resolvePhpClassReference(className, namespace, uses);
+}
+
+function resolvePhpClassReference(className: string, namespace: string, uses: Map<string, string>): string {
   const normalized = className.replace(/^\\/, "");
   if (normalized.includes("\\")) {
     return normalized;
@@ -2107,6 +2950,26 @@ function createItemFromLine(
     kind,
     source: { file, line, character, offset },
     detail,
+  };
+}
+
+function createResponseFieldItem(field: ResponseFieldMatch, file: string, text: string, route: IndexedItem): IndexedItem {
+  const key = field.path.join(".");
+  return {
+    ...createItem("response-field", key, file, text, field.index),
+    label: key,
+    detail: `Laravel response: ${route.httpMethod ?? "ANY"} ${route.uri ?? route.key}`,
+    uri: route.uri,
+    httpMethod: route.httpMethod,
+    routeName: route.routeName,
+    controllerClass: route.controllerClass,
+    method: route.method,
+    responseRouteUri: route.uri,
+    responseRouteName: route.routeName,
+    responseHttpMethod: route.httpMethod,
+    responseControllerClass: route.controllerClass,
+    responseControllerMethod: route.method,
+    responseFieldPath: field.path,
   };
 }
 

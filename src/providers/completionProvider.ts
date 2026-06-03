@@ -8,8 +8,11 @@ import {
   resolveLivewireComponentPrefix,
   resolveStringContext,
 } from "../context/completionContext";
+import { resolveFrontendResponseCompletionContext } from "../context/frontendResponseContext";
 import type { LaravelIndex } from "../indexer";
 import type { Logger } from "../logging/logger";
+
+const FRONTEND_RESPONSE_LANGUAGES = new Set(["javascript", "javascriptreact", "typescript", "typescriptreact", "vue", "svelte"]);
 
 export class LaravelCompletionProvider implements vscode.CompletionItemProvider {
   public constructor(
@@ -28,6 +31,40 @@ export class LaravelCompletionProvider implements vscode.CompletionItemProvider 
 
     const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
     const documentPrefix = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+
+    if (FRONTEND_RESPONSE_LANGUAGES.has(document.languageId)) {
+      const responseContext = resolveFrontendResponseCompletionContext(document.getText(), document.offsetAt(position));
+      if (responseContext.kind === "response") {
+        const responseItems = index.frontendResponseCompletions(responseContext.request, responseContext.prefix, responseContext.path);
+        const items = responseItems.map((item) => {
+          const completion = new vscode.CompletionItem(item.label, vscode.CompletionItemKind.Field);
+          completion.insertText = item.key;
+          completion.detail = item.detail ?? "Laravel response field";
+          completion.range = new vscode.Range(
+            document.positionAt(responseContext.rangeStart),
+            document.positionAt(responseContext.rangeEnd),
+          );
+          completion.sortText = responseCompletionSortText(item);
+          return completion;
+        });
+
+        this.logger.debug("[LaravelCompletionProvider.provide] frontend response fields", {
+          file: document.uri.fsPath,
+          requestKind: responseContext.request.kind,
+          requestValue: responseContext.request.value,
+          method: responseContext.request.method,
+          prefix: responseContext.prefix,
+          path: responseContext.path,
+          count: items.length,
+        });
+        return items;
+      }
+
+      this.logger.debug("[LaravelCompletionProvider.provide] no frontend response context", {
+        file: document.uri.fsPath,
+        reason: responseContext.reason,
+      });
+    }
 
     if (document.languageId === "blade") {
       const componentContext = resolveBladeComponentPrefix(linePrefix);
@@ -168,6 +205,11 @@ export class LaravelCompletionProvider implements vscode.CompletionItemProvider 
   }
 }
 
+function responseCompletionSortText(item: { key: string; responseFieldPath?: string[] }): string {
+  const depth = item.responseFieldPath?.length ?? item.key.split(".").length;
+  return `${String(depth).padStart(2, "0")}:${item.key}`;
+}
+
 function toCompletionKind(kind: string): vscode.CompletionItemKind {
   switch (kind) {
     case "route":
@@ -191,6 +233,8 @@ function toCompletionKind(kind: string): vscode.CompletionItemKind {
     case "controller-method":
       return vscode.CompletionItemKind.Method;
     case "route-action":
+      return vscode.CompletionItemKind.Method;
+    case "artisan-command":
       return vscode.CompletionItemKind.Method;
     case "filesystem-disk":
       return vscode.CompletionItemKind.Value;

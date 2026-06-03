@@ -34,6 +34,7 @@ describe("Laravel indexing", () => {
         "GET /api/product-statistics/{product_statistic}",
         "PATCH /api/product-statistics/{product_statistic}",
         "PATCH /api/v1/profiles/{profile}",
+        "GET /api/users/{user}/summary",
         "GET /users",
         "POST /users",
         "GET /labels/{projectDelivery}/{article}",
@@ -245,6 +246,101 @@ describe("Laravel indexing", () => {
     expect(index.all("eloquent-factory-state").filter((item) => item.modelClass === "App\\Models\\User").map((item) => item.key)).toEqual(
       expect.arrayContaining(["suspended", "withPreferences"]),
     );
+    expect(index.all("container-binding").map((item) => item.key)).toEqual(
+      expect.arrayContaining([
+        "App\\Contracts\\PublisherInterface",
+        "App\\Contracts\\FactoryPublisherInterface",
+        "App\\Contracts\\ClosurePublisherInterface",
+      ]),
+    );
+    expect(index.find("container-binding", "App\\Contracts\\PublisherInterface")).toMatchObject({
+      abstractClass: "App\\Contracts\\PublisherInterface",
+      concreteClass: "App\\Services\\DatabasePublisher",
+      bindingKind: "bind",
+    });
+    expect(index.find("container-binding", "App\\Contracts\\PublisherInterface")?.concreteSource?.file).toContain("DatabasePublisher.php");
+    expect(index.find("container-binding", "App\\Contracts\\FactoryPublisherInterface")).toMatchObject({
+      abstractClass: "App\\Contracts\\FactoryPublisherInterface",
+      concreteClass: "App\\Services\\FactoryPublisher",
+      bindingKind: "singleton",
+    });
+    expect(index.find("container-binding", "App\\Contracts\\ClosurePublisherInterface")).toMatchObject({
+      abstractClass: "App\\Contracts\\ClosurePublisherInterface",
+      concreteClass: "App\\Services\\ClosurePublisher",
+      bindingKind: "scoped",
+    });
+    expect(index.all("container-method").filter((item) => item.concreteClass === "App\\Services\\DatabasePublisher").map((item) => item.method)).toEqual(
+      expect.arrayContaining(["publish", "status"]),
+    );
+    expect(index.findContainerMethodByAbstract("App\\Contracts\\FactoryPublisherInterface", "publishFromFactory")?.source.file).toContain(
+      "FactoryPublisher.php",
+    );
+    expect(index.findContainerMethodByAbstract("App\\Contracts\\ClosurePublisherInterface", "publishFromClosure")?.source.file).toContain(
+      "ClosurePublisher.php",
+    );
+    expect(index.all("container-method").map((item) => item.method)).not.toContain("internalState");
+    expect(index.findContainerMethodByAbstract("PublisherInterface", "publish")).toMatchObject({
+      concreteClass: "App\\Services\\DatabasePublisher",
+      method: "publish",
+    });
+    expect(index.findContainerBindingByAbstract("PublisherInterface")?.concreteClass).toBe("App\\Services\\DatabasePublisher");
+    expect(index.find("container-binding", "Illuminate\\Contracts\\Cache\\Factory")).toMatchObject({
+      abstractClass: "Illuminate\\Contracts\\Cache\\Factory",
+      concreteClass: "Illuminate\\Cache\\CacheManager",
+      bindingKind: "laravel-core-alias",
+    });
+    expect(index.findContainerMethodByAbstract("Illuminate\\Contracts\\Cache\\Factory", "store")).toMatchObject({
+      concreteClass: "Illuminate\\Cache\\CacheManager",
+      method: "store",
+    });
+    expect(index.all("response-field").map((item) => `${item.responseHttpMethod} ${item.responseRouteUri} ${item.key}`)).toEqual(
+      expect.arrayContaining([
+        "GET /api/health ok",
+        "GET /api/health status",
+        "GET /api/health status.name",
+        "POST /api/orders/{order}/cancel cancelled",
+        "POST /api/orders/{order}/cancel order.id",
+        "POST /api/product-statistics id",
+        "POST /api/product-statistics name",
+        "POST /api/product-statistics meta.source",
+        "PATCH /api/product-statistics/{product_statistic} updated",
+        "PATCH /api/product-statistics/{product_statistic} product.name",
+        "GET /api/users/{user}/summary user",
+        "GET /api/users/{user}/summary user.name",
+        "GET /api/users/{user}/summary user.email",
+        "GET /api/users/{user}/summary statusArray",
+      ]),
+    );
+    expect(index.frontendResponseCompletions({ kind: "url", value: "/api/health", method: "GET" }, "st").map((item) => item.key)).toEqual([
+      "status",
+      "status.name",
+    ]);
+    expect(index.frontendResponseCompletions({ kind: "url", value: "/api/health", method: "GET" }, "na", ["status"]).map((item) => item.key)).toEqual([
+      "name",
+    ]);
+    expect(index.frontendResponseCompletions({ kind: "url", value: "/api/product-statistics", method: "POST" }, "na").map((item) => item.key)).toEqual([
+      "name",
+    ]);
+    expect(index.frontendResponseCompletions({ kind: "route-name", value: "api.orders.cancel" }, "cancel").map((item) => item.key)).toEqual([
+      "cancelled",
+    ]);
+    expect(index.frontendResponseCompletions({ kind: "route-name", value: "api.users.summary" }, "status").map((item) => item.key)).toEqual([
+      "statusArray",
+    ]);
+    expect(index.frontendResponseCompletions({ kind: "url", value: "/api/users/42/summary", method: "GET" }, "em", ["user"]).map((item) => item.key)).toEqual([
+      "email",
+      "email_verified_at",
+    ]);
+    expect(index.findContainerBindingByAbstract("Psr\\SimpleCache\\CacheInterface")?.concreteClass).toBe("Illuminate\\Cache\\Repository");
+    expect(index.all("artisan-command").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["reports:send", "reports:cleanup"]),
+    );
+    expect(index.find("artisan-command", "reports:send")).toMatchObject({
+      commandClass: "App\\Console\\Commands\\SendReportsCommand",
+      detail: "Artisan command App\\Console\\Commands\\SendReportsCommand",
+    });
+    expect(index.find("artisan-command", "reports:send")?.source.file).toContain("SendReportsCommand.php");
+    expect(index.find("artisan-command", "reports:cleanup")?.source.file).toContain("CleanupReportsCommand.php");
     expect(index.all("eloquent-factory-state").map((item) => item.key)).not.toEqual(
       expect.arrayContaining(["definition", "configure"]),
     );

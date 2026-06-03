@@ -13,11 +13,13 @@ It is inspired by common Laravel IDE workflows, but it is not affiliated with La
 - Navigates exact string references back to indexed source files when possible.
 - Navigates route actions to controller methods, including grouped string actions, legacy `Controller@method` strings, array actions, invokable controllers, controller groups, nested groups, reverse references, CodeLens route counts, and multi-route picker support.
 - Completes and navigates route middleware aliases from `app/Http/Kernel.php`, route middleware declarations, and controller `$this->middleware(...)` calls.
+- Completes Artisan command names in `Artisan::call(...)`, `Artisan::queue(...)`, `artisan(...)`, `$schedule->command(...)`, and console command `$this->call(...)` contexts, and navigates command strings to their command classes.
 - Completes Eloquent model fields from migrations and cast attributes in static and chained query contexts such as `Model::where(...)`, `Model::query()->orderBy(...)`, `select`, `addSelect`, `pluck`, `value`, `groupBy`, and `having`.
 - Completes model attribute names in `$fillable`, `$guarded`, and `$casts`, including models that inherit from a shared application base model, and suggests likely `$casts` values from migration column types.
 - Completes and navigates Eloquent relations in `with`, `load`, `loadMissing`, `whereHas`, `doesntHave`, `withCount`, aggregate eager-load helpers, and nested relation paths such as `phoneModel.workpieces`.
 - Completes and navigates local Eloquent scopes such as `Product::ready()`, `Product::query()->ready()`, and `$query->ready()`.
 - Completes and navigates factory state methods in contexts such as `User::factory()->suspended()` and `User::factory()->count(3)->withPreferences()`.
+- Navigates Laravel service-container interface calls to concrete implementations when providers bind `Interface::class` to `Concrete::class` through simple `bind`, `singleton`, `scoped`, `bindIf`, or `singletonIf` calls, with built-in presets for common Laravel core contracts such as cache, config, cookies, database, encryption, events, filesystem, logging, mail, queue, routing, session, translation, validation, and views.
 - Completes table-scoped query builder columns in contexts such as `DB::table('users')->where(...)`, `select`, `orderBy`, and `pluck`.
 - Completes and navigates filesystem disk names in `Storage::disk/fake/persistentFake(...)`, upload `store*` disk arguments, and `filesystems.php` `default`/`cloud` values.
 - Adds explicit package-aware model intelligence hooks, including Laravel Sanctum `HasApiTokens` `tokens` relations when `laravel/sanctum` is installed.
@@ -26,6 +28,7 @@ It is inspired by common Laravel IDE workflows, but it is not affiliated with La
 - Indexes first ecosystem module surfaces for Livewire components, Inertia pages, Filament resources, and Nova resources, with completions/definitions for `@livewire(...)`, `<livewire:...>`, `Livewire::mount(...)`, `Inertia::render(...)`, `Route::inertia(...)`, Filament resource registration calls, and Nova resource registration calls.
 - Shows clickable CodeLens route hints above frontend `axios`, `fetch`, and Ziggy-style `route(...)` request targets in JavaScript, TypeScript, Vue, React, and Svelte files, including common string concatenation, template literal URL patterns, and simple URL variables. When a controller action can be resolved, a second CodeLens opens the controller method directly.
 - Resolves frontend route targets against PHP route files under `routes/**/*.php`, including route group prefixes, `Route::resource(...)` / `Route::apiResource(...)`, and file-level prefixes from `RouteServiceProvider` or Laravel 11-style `bootstrap/app.php` routing configuration.
+- Completes frontend response properties such as `response.data.<field>` and destructured `data.<field>` when a matched Laravel route returns a statically indexed literal array, `collect([...])`, or `response()->json([...])` payload. Explicitly type-hinted Eloquent model values inside those arrays expose known model fields as nested response suggestions.
 
 ## Preview Limits
 
@@ -39,9 +42,12 @@ Known limits:
 - Database columns are inferred from migrations, not from a live database connection.
 - Cast attributes are indexed from literal `$casts = [...]` arrays and literal `casts(): array { return [...]; }` methods. Cast value suggestions are migration-type hints, not PHP type diagnostics.
 - Factory state methods are indexed from `database/factories` classes that either declare `protected $model = Model::class` or follow the `ModelFactory` naming convention.
+- Service-container navigation supports literal provider bindings such as `$this->app->bind(Contract::class, Service::class)`, simple factories such as `fn () => new Service()` and `function () { return new Service(); }`, Laravel core container presets, and direct usages like typed `$service->method()`, `$this->service->method()`, `app(Contract::class)->method()`, and `app()->make(Contract::class)->method()`. Project bindings take priority over Laravel presets. Contextual bindings, decorators, runtime aliases, and package-specific vendor provider bindings are not fully covered yet. Verbose DEBUG logs include binding scanner decisions for troubleshooting.
 - Route middleware aliases are indexed from literal `$middlewareAliases`/`$routeMiddleware` arrays and literal `->alias([...])` calls.
+- Artisan commands are indexed from application command classes with literal `protected $signature = 'name ...'` or `protected $name = 'name'` declarations. Dynamic signatures and commands registered only through runtime expressions are not inferred yet.
 - Ecosystem coverage starts with Livewire class/view components, Inertia pages, Filament resources, and Nova resources; deeper Nova, Filament, and Dusk support is not fully covered yet.
 - Frontend HTTP route navigation currently supports common `axios`/`fetch`/`route(...)` patterns, plus simple string concatenation, template literal URLs, and conventional resource routes. Highly dynamic URLs, customized resource route options, package-registered routes, and custom clients may need additional focused coverage.
+- Frontend response property completions are intentionally conservative: they use literal route/controller arrays, literal `collect([...])`, and `response()->json([...])` only. When an array value is an explicitly type-hinted Eloquent model variable, known model fields from migrations/casts are exposed as nested suggestions. Hidden/visible serialization rules, dynamic resources, conditional response fields, transformers, and arbitrary service-layer DTOs are not inferred yet. DEBUG logs include response-shape scan and lookup decisions.
 
 ## Commands
 
@@ -90,7 +96,7 @@ Built-in package presets currently add Laravel filesystem disk completions for c
 For a local VSIX build:
 
 ```bash
-cursor --install-extension /absolute/path/to/laravel-k-helper-0.10.4.vsix
+cursor --install-extension /absolute/path/to/laravel-k-helper-0.10.6.vsix
 ```
 
 Reload Cursor or VS Code after reinstalling. If older local builds are installed under previous names, remove `k0rsair.laravel-k-helper`, `local-dev.laravel-assist`, `local-dev.laravel-aware-vscode`, or `local-dev.laravolve` to avoid duplicate providers.

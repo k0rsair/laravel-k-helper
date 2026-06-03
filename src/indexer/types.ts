@@ -23,6 +23,17 @@ export interface IndexedItem {
   uri?: string;
   httpMethod?: string;
   routeName?: string;
+  abstractClass?: string;
+  concreteClass?: string;
+  bindingKind?: string;
+  concreteSource?: SourceLocation;
+  commandClass?: string;
+  responseRouteUri?: string;
+  responseRouteName?: string;
+  responseHttpMethod?: string;
+  responseControllerClass?: string;
+  responseControllerMethod?: string;
+  responseFieldPath?: string[];
 }
 
 export type IdeJsonCompletionKind =
@@ -74,6 +85,10 @@ export type LaravelIndexKind =
   | "eloquent-relation"
   | "eloquent-scope"
   | "eloquent-factory-state"
+  | "container-binding"
+  | "container-method"
+  | "artisan-command"
+  | "response-field"
   | "livewire-component"
   | "inertia-page"
   | "filament-resource"
@@ -103,6 +118,10 @@ export interface LaravelIndexSnapshot {
   eloquentRelations: IndexedItem[];
   eloquentScopes: IndexedItem[];
   eloquentFactoryStates: IndexedItem[];
+  containerBindings: IndexedItem[];
+  containerMethods: IndexedItem[];
+  artisanCommands: IndexedItem[];
+  responseFields: IndexedItem[];
   livewireComponents: IndexedItem[];
   inertiaPages: IndexedItem[];
   filamentResources: IndexedItem[];
@@ -131,6 +150,10 @@ export interface IndexStats {
   eloquentRelations: number;
   eloquentScopes: number;
   eloquentFactoryStates: number;
+  containerBindings: number;
+  containerMethods: number;
+  artisanCommands: number;
+  responseFields: number;
   livewireComponents: number;
   inertiaPages: number;
   filamentResources: number;

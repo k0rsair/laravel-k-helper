@@ -7,6 +7,7 @@ import {
 import type { LaravelIndex } from "../indexer";
 import type { LaravelIndexKind } from "../indexer/types";
 import type { Logger } from "../logging/logger";
+import { resolveBoundImplementationDefinition } from "./boundDefinitionResolver";
 
 export class LaravelDefinitionProvider implements vscode.DefinitionProvider {
   public constructor(
@@ -24,6 +25,14 @@ export class LaravelDefinitionProvider implements vscode.DefinitionProvider {
     }
 
     const line = document.lineAt(position.line).text;
+    const boundSource = resolveBoundImplementationDefinition(index, this.logger, document.getText(), document.offsetAt(position));
+    if (boundSource) {
+      return new vscode.Location(
+        vscode.Uri.file(boundSource.file),
+        new vscode.Position(boundSource.line, boundSource.character),
+      );
+    }
+
     const factoryStateReference = extractFactoryStateReferenceAtOffset(line, position.character);
     if (factoryStateReference) {
       const item = index
@@ -360,6 +369,12 @@ function inferKindFromLine(linePrefix: string, languageId: string): LaravelIndex
   }
   if (/\$request->(?:input|get|string|boolean|integer|float|date|validated)\(\s*['"]?$/.test(linePrefix)) {
     return "request-field";
+  }
+  if (/\bArtisan::(?:call|queue)\(\s*['"]?$/.test(linePrefix) || /\bartisan\(\s*['"]?$/.test(linePrefix)) {
+    return "artisan-command";
+  }
+  if (/(?:\$this|\$[A-Za-z_][A-Za-z0-9_]*)->(?:command|call|callSilent|callQueued)\(\s*['"]?$/.test(linePrefix)) {
+    return "artisan-command";
   }
   if (/\bLivewire::mount\(\s*['"]?$/.test(linePrefix) || /@livewire\(\s*['"]?$/.test(linePrefix)) {
     return "livewire-component";

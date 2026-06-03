@@ -7,6 +7,7 @@ import { LaravelCompletionProvider } from "./providers/completionProvider";
 import { LaravelDefinitionProvider } from "./providers/definitionProvider";
 import { LaravelReferenceProvider } from "./providers/referenceProvider";
 import { LaravelCodeLensProvider } from "./providers/codeLensProvider";
+import { LaravelDocumentLinkProvider } from "./providers/documentLinkProvider";
 import { LaravelAutoSuggestTrigger } from "./providers/autoSuggestTrigger";
 import { buildLaravelArtifact, type LaravelArtifactType } from "./generators/artifacts";
 import type { SourceLocation } from "./indexer/types";
@@ -73,7 +74,8 @@ function registerCommands(context: vscode.ExtensionContext, getIndex: () => Lara
     const index = getIndex();
     const stats = index?.stats();
     const status = stats
-      ? `Routes ${stats.routes}, HTTP routes ${stats.httpRoutes}, actions ${stats.routeActions}, middleware ${stats.routeMiddleware}, views ${stats.views}, config ${stats.config}, translations ${stats.translations}, env ${stats.env}, disks ${stats.filesystemDisks}, components ${stats.bladeComponents}, Livewire ${stats.livewireComponents}, Inertia ${stats.inertiaPages}, Filament ${stats.filamentResources}, Nova ${stats.novaResources}, request fields ${stats.requestFields}, models ${stats.eloquentModels}, relations ${stats.eloquentRelations}, scopes ${stats.eloquentScopes}, factory states ${stats.eloquentFactoryStates}, tables ${stats.databaseTables}, columns ${stats.databaseColumns}`
+      ? `Routes ${stats.routes}, HTTP routes ${stats.httpRoutes}, actions ${stats.routeActions}, commands ${stats.artisanCommands}, middleware ${stats.routeMiddleware}, views ${stats.views}, config ${stats.config}, translations ${stats.translations}, env ${stats.env}, disks ${stats.filesystemDisks}, components ${stats.bladeComponents}, Livewire ${stats.livewireComponents}, Inertia ${stats.inertiaPages}, Filament ${stats.filamentResources}, Nova ${stats.novaResources}, request fields ${stats.requestFields}, models ${stats.eloquentModels}, relations ${stats.eloquentRelations}, scopes ${stats.eloquentScopes}, factory states ${stats.eloquentFactoryStates}, tables ${stats.databaseTables}, columns ${stats.databaseColumns}`
+          + `, container bindings ${stats.containerBindings}, container methods ${stats.containerMethods}, response fields ${stats.responseFields}`
       : "No active Laravel index.";
     void vscode.window.showInformationMessage(`${EXTENSION_NAME}: ${status}`);
     logger?.info("[Extension.showIndexStatus] status requested", { stats });
@@ -211,7 +213,9 @@ function registerProviders(
   activeLogger: OutputLogger,
 ): void {
   const laravelSelector: vscode.DocumentSelector = [
+    { language: "php", scheme: "file", pattern: "**/*.php" },
     { language: "php", scheme: "file" },
+    { language: "blade", scheme: "file", pattern: "**/*.blade.php" },
     { language: "blade", scheme: "file" },
     { pattern: "**/*.blade.php", scheme: "file" },
   ];
@@ -227,7 +231,7 @@ function registerProviders(
 
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
-      laravelSelector,
+      [...laravelSelector, ...frontendSelector],
       new LaravelCompletionProvider(getIndex, activeLogger),
       "'",
       '"',
@@ -237,6 +241,7 @@ function registerProviders(
       ">",
     ),
     vscode.languages.registerDefinitionProvider(laravelSelector, new LaravelDefinitionProvider(getIndex, activeLogger)),
+    vscode.languages.registerDocumentLinkProvider(laravelSelector, new LaravelDocumentLinkProvider(getIndex, activeLogger)),
     vscode.languages.registerReferenceProvider(laravelSelector, new LaravelReferenceProvider(getIndex, activeLogger)),
     vscode.languages.registerCodeLensProvider(codeLensSelector, new LaravelCodeLensProvider(getIndex, activeLogger)),
     new LaravelAutoSuggestTrigger(() => readSetting<boolean>("autoTriggerSuggest", true), activeLogger),

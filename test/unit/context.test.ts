@@ -49,6 +49,26 @@ describe("completion context", () => {
       kind: "database-table",
       prefix: "us",
     });
+    expect(resolveStringContext("Artisan::call('reports:", "php")).toMatchObject({
+      kind: "artisan-command",
+      prefix: "reports:",
+    });
+    expect(resolveStringContext("Artisan::queue('reports:", "php")).toMatchObject({
+      kind: "artisan-command",
+      prefix: "reports:",
+    });
+    expect(resolveStringContext("artisan('reports:", "php")).toMatchObject({
+      kind: "artisan-command",
+      prefix: "reports:",
+    });
+    expect(resolveStringContext("$schedule->command('reports:", "php")).toMatchObject({
+      kind: "artisan-command",
+      prefix: "reports:",
+    });
+    expect(resolveStringContext("$this->callSilent('reports:", "php")).toMatchObject({
+      kind: "artisan-command",
+      prefix: "reports:",
+    });
     expect(resolveStringContext("Livewire::mount('user", "php")).toMatchObject({
       kind: "livewire-component",
       prefix: "user",

@@ -12,6 +12,7 @@ import { scanIdeJsonRules } from "./ideJson";
 import {
   scanBladeComponents,
   scanConfig,
+  scanContainerBindings,
   scanControllerMethods,
   scanDatabaseSchema,
   scanEnvKeys,
@@ -24,6 +25,8 @@ import {
   scanRouteActions,
   scanRouteControllerScopes,
   scanRoutes,
+  scanArtisanCommands,
+  scanResponseFields,
   scanTranslations,
   scanValidationRules,
   scanViews,
@@ -56,6 +59,8 @@ export class LaravelIndex {
       ideJsonRules,
       databaseSchema,
       ecosystemItems,
+      containerIndex,
+      artisanCommands,
     ] = await Promise.all([
       scanRoutes(this.projectRoot, this.logger),
       scanViews(this.projectRoot, this.logger),
@@ -71,11 +76,22 @@ export class LaravelIndex {
       scanIdeJsonRules(this.projectRoot, this.logger),
       scanDatabaseSchema(this.projectRoot, this.logger),
       scanEcosystemItems(this.projectRoot, this.logger),
+      scanContainerBindings(this.projectRoot, this.logger),
+      scanArtisanCommands(this.projectRoot, this.logger),
     ]);
     const eloquentIndex = await scanEloquentModels(this.projectRoot, this.logger, databaseSchema.columns);
     const routeControllerScopes = await scanRouteControllerScopes(this.projectRoot, this.logger);
     const httpRoutes = await scanHttpRoutes(this.projectRoot, this.logger, controllerMethods, routeControllerScopes);
     const routeActions = await scanRouteActions(this.projectRoot, this.logger, controllerMethods, routeControllerScopes);
+    const responseFields = await scanResponseFields(
+      this.projectRoot,
+      this.logger,
+      httpRoutes,
+      controllerMethods,
+      routeControllerScopes,
+      eloquentIndex.fields,
+      eloquentIndex.models,
+    );
 
     this.snapshot = {
       projectRoot: this.projectRoot,
@@ -101,6 +117,10 @@ export class LaravelIndex {
       eloquentRelations: eloquentIndex.relations,
       eloquentScopes: eloquentIndex.scopes,
       eloquentFactoryStates: eloquentIndex.factoryStates,
+      containerBindings: containerIndex.bindings,
+      containerMethods: containerIndex.methods,
+      artisanCommands,
+      responseFields,
       livewireComponents: ecosystemItems.livewireComponents,
       inertiaPages: ecosystemItems.inertiaPages,
       filamentResources: ecosystemItems.filamentResources,
@@ -142,6 +162,10 @@ export class LaravelIndex {
       eloquentRelations: this.snapshot?.eloquentRelations.length ?? 0,
       eloquentScopes: this.snapshot?.eloquentScopes.length ?? 0,
       eloquentFactoryStates: this.snapshot?.eloquentFactoryStates.length ?? 0,
+      containerBindings: this.snapshot?.containerBindings.length ?? 0,
+      containerMethods: this.snapshot?.containerMethods.length ?? 0,
+      artisanCommands: this.snapshot?.artisanCommands.length ?? 0,
+      responseFields: this.snapshot?.responseFields.length ?? 0,
       livewireComponents: this.snapshot?.livewireComponents.length ?? 0,
       inertiaPages: this.snapshot?.inertiaPages.length ?? 0,
       filamentResources: this.snapshot?.filamentResources.length ?? 0,
@@ -196,6 +220,14 @@ export class LaravelIndex {
         return snapshot.eloquentScopes;
       case "eloquent-factory-state":
         return snapshot.eloquentFactoryStates;
+      case "container-binding":
+        return snapshot.containerBindings;
+      case "container-method":
+        return snapshot.containerMethods;
+      case "artisan-command":
+        return snapshot.artisanCommands;
+      case "response-field":
+        return snapshot.responseFields;
       case "livewire-component":
         return snapshot.livewireComponents;
       case "inertia-page":
@@ -228,6 +260,63 @@ export class LaravelIndex {
 
   public findHttpRouteByName(routeName: string): IndexedItem | undefined {
     return this.all("http-route").find((item) => item.routeName === routeName);
+  }
+
+  public frontendResponseCompletions(
+    reference: { kind: "route-name" | "url"; value: string; method?: string },
+    prefix: string,
+    path: string[] = [],
+  ): IndexedItem[] {
+    const route =
+      reference.kind === "route-name"
+        ? this.findHttpRouteByName(reference.value)
+        : this.findHttpRouteByRequest(reference.value, reference.method);
+    if (!route) {
+      this.logger.debug("[LaravelIndex.frontendResponseCompletions] no route match", {
+        kind: reference.kind,
+        value: reference.value,
+        method: reference.method,
+        prefix,
+      });
+      return [];
+    }
+
+    const fields = this.all("response-field").filter((item) => responseFieldBelongsToRoute(item, route));
+    if (fields.length === 0) {
+      this.logger.debug("[LaravelIndex.frontendResponseCompletions] no response fields indexed", {
+        route: route.uri ?? route.key,
+        routeName: route.routeName,
+        method: route.httpMethod,
+        prefix,
+      });
+      return [];
+    }
+
+    const seen = new Set<string>();
+    return fields.flatMap((item) => {
+      const fieldPath = item.responseFieldPath ?? item.key.split(".");
+      if (!pathPrefixMatches(fieldPath, path)) {
+        return [];
+      }
+
+      const remainingPath = fieldPath.slice(path.length);
+      if (remainingPath.length === 0) {
+        return [];
+      }
+
+      const key = remainingPath.join(".");
+      if (!key.startsWith(prefix) || seen.has(key)) {
+        return [];
+      }
+      seen.add(key);
+
+      return [{
+        ...item,
+        key,
+        label: key,
+        detail: item.detail ?? `Laravel response: ${route.httpMethod ?? "ANY"} ${route.uri ?? route.key}`,
+      }];
+    }).sort((a, b) => responseFieldSortKey(a).localeCompare(responseFieldSortKey(b)));
   }
 
   public routeActionCompletions(file: string, offset: number, prefix: string, controllerReference?: string): IndexedItem[] {
@@ -403,6 +492,50 @@ export class LaravelIndex {
     return this.all("route-action").filter((item) => item.detail === controllerMethodKey && item.routeSource);
   }
 
+  public findContainerBindingByAbstract(reference: string): IndexedItem | undefined {
+    const normalized = normalizeClassReference(reference);
+    const candidates = this.all("container-binding").filter((item) => classReferenceMatches(item.abstractClass ?? item.key, normalized));
+    if (candidates.length > 1) {
+      this.logger.debug("[LaravelIndex.findContainerBindingByAbstract] multiple bindings found", {
+        abstractClass: normalized,
+        concreteClasses: candidates.map((item) => item.concreteClass),
+      });
+    }
+    return candidates[0];
+  }
+
+  public findContainerMethodByAbstract(reference: string, method: string): IndexedItem | undefined {
+    const normalized = normalizeClassReference(reference);
+    const bindings = this.all("container-binding").filter((item) => classReferenceMatches(item.abstractClass ?? item.key, normalized));
+    if (bindings.length === 0) {
+      this.logger.debug("[LaravelIndex.findContainerMethodByAbstract] no binding found", {
+        abstractClass: normalized,
+        method,
+      });
+      return undefined;
+    }
+
+    const candidates = bindings.flatMap((binding) =>
+      this.all("container-method").filter((item) => item.concreteClass === binding.concreteClass && item.method === method),
+    );
+    if (candidates.length === 0) {
+      this.logger.debug("[LaravelIndex.findContainerMethodByAbstract] no concrete method found", {
+        abstractClass: normalized,
+        concreteClasses: bindings.map((binding) => binding.concreteClass),
+        method,
+      });
+      return undefined;
+    }
+    if (candidates.length > 1) {
+      this.logger.debug("[LaravelIndex.findContainerMethodByAbstract] multiple concrete methods found", {
+        abstractClass: normalized,
+        method,
+        concreteClasses: candidates.map((item) => item.concreteClass),
+      });
+    }
+    return candidates[0];
+  }
+
   private findNearestRouteControllerScope(file: string, offset: number): RouteControllerScope | undefined {
     return (this.snapshot?.routeControllerScopes ?? [])
       .filter((scope) => scope.file === file && offset >= scope.bodyStart && offset <= scope.bodyEnd)
@@ -519,6 +652,45 @@ function normalizeHttpUri(uri: string): string {
   value = value.split(/[?#]/)[0] ?? value;
   value = value.replace(/^\/+|\/+$/g, "");
   return value ? `/${value}` : "/";
+}
+
+function normalizeClassReference(reference: string): string {
+  return reference.replace(/^\\/, "").replace(/::class$/, "");
+}
+
+function classReferenceMatches(candidate: string, normalizedReference: string): boolean {
+  const normalizedCandidate = normalizeClassReference(candidate);
+  const shortName = normalizedCandidate.split("\\").pop();
+  const referenceShortName = normalizedReference.split("\\").pop();
+  return (
+    normalizedCandidate === normalizedReference ||
+    shortName === normalizedReference ||
+    (referenceShortName !== undefined && shortName === referenceShortName) ||
+    normalizedCandidate.endsWith(`\\${normalizedReference}`)
+  );
+}
+
+function responseFieldBelongsToRoute(field: IndexedItem, route: IndexedItem): boolean {
+  if (route.routeName && field.responseRouteName === route.routeName) {
+    return true;
+  }
+
+  return (
+    field.responseRouteUri === route.uri &&
+    (!route.httpMethod || !field.responseHttpMethod || field.responseHttpMethod === route.httpMethod)
+  );
+}
+
+function pathPrefixMatches(value: string[], prefix: string[]): boolean {
+  if (prefix.length > value.length) {
+    return false;
+  }
+  return prefix.every((part, index) => value[index] === part);
+}
+
+function responseFieldSortKey(item: IndexedItem): string {
+  const path = item.responseFieldPath ?? item.key.split(".");
+  return `${String(path.length).padStart(2, "0")}:${item.key}`;
 }
 
 function routeUriMatches(routeUri: string, requestUri: string): boolean {
