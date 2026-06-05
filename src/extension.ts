@@ -3,12 +3,14 @@ import { detectLaravelProject } from "./indexer/detector";
 import { LaravelIndex } from "./indexer";
 import { createLaravelWatchers, ReindexScheduler } from "./indexer/watchers";
 import { OutputLogger, type LogLevel } from "./logging/logger";
+import { buildModelDiagnosticFindings } from "./diagnostics/modelDiagnostics";
 import { LaravelCompletionProvider } from "./providers/completionProvider";
 import { LaravelDefinitionProvider } from "./providers/definitionProvider";
 import { LaravelReferenceProvider } from "./providers/referenceProvider";
 import { LaravelCodeLensProvider } from "./providers/codeLensProvider";
 import { LaravelDocumentLinkProvider } from "./providers/documentLinkProvider";
 import { LaravelAutoSuggestTrigger } from "./providers/autoSuggestTrigger";
+import { LaravelHoverProvider } from "./providers/hoverProvider";
 import { buildLaravelArtifact, type LaravelArtifactType } from "./generators/artifacts";
 import type { SourceLocation } from "./indexer/types";
 import { pathExists } from "./utils/files";
@@ -19,10 +21,13 @@ const EXTENSION_NAME = "Laravel K Helper";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel(EXTENSION_NAME);
-  logger = new OutputLogger(output, readLogLevel());
+  const activeLogger = new OutputLogger(output, readLogLevel());
+  logger = activeLogger;
   context.subscriptions.push(output);
 
-  logger.info("[Extension.activate] activating Laravel K Helper");
+  activeLogger.info("[Extension.activate] activating Laravel K Helper");
+  const modelDiagnostics = vscode.languages.createDiagnosticCollection("laravelKHelper-models");
+  context.subscriptions.push(modelDiagnostics);
 
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
@@ -38,22 +43,56 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 
   const configuredRoot = readSetting<string>("projectRoot", "") || readSetting<string>("laravelDirectory", "") || undefined;
-  const project = await detectLaravelProject(workspaceFolder.uri.fsPath, configuredRoot, logger);
+  const project = await detectLaravelProject(workspaceFolder.uri.fsPath, configuredRoot, activeLogger);
   if (!project) {
     registerCommands(context, () => undefined);
     return;
   }
 
-  activeIndex = new LaravelIndex(project.root, logger);
+  activeIndex = new LaravelIndex(project.root, activeLogger);
   await activeIndex.reindex();
+  await refreshModelDiagnostics(activeIndex, modelDiagnostics, activeLogger);
 
   const scheduler = new ReindexScheduler(async () => {
     await activeIndex?.reindex();
-  }, logger);
+    await refreshModelDiagnostics(activeIndex, modelDiagnostics, activeLogger);
+  }, activeLogger);
 
   context.subscriptions.push(scheduler, ...createLaravelWatchers(workspaceFolder, scheduler));
   registerCommands(context, () => activeIndex, project.root);
-  registerProviders(context, () => activeIndex, logger);
+  registerProviders(context, () => activeIndex, activeLogger);
+}
+
+async function refreshModelDiagnostics(
+  index: LaravelIndex | undefined,
+  collection: vscode.DiagnosticCollection,
+  activeLogger: OutputLogger,
+): Promise<void> {
+  const findings = await buildModelDiagnosticFindings(index, activeLogger);
+  collection.clear();
+
+  const grouped = new Map<string, vscode.Diagnostic[]>();
+  for (const finding of findings) {
+    const diagnostics = grouped.get(finding.file) ?? [];
+    diagnostics.push(
+      new vscode.Diagnostic(
+        new vscode.Range(finding.line, finding.character, finding.line, finding.endCharacter),
+        finding.message,
+        vscode.DiagnosticSeverity.Warning,
+      ),
+    );
+    diagnostics[diagnostics.length - 1]!.code = finding.code;
+    grouped.set(finding.file, diagnostics);
+  }
+
+  for (const [file, diagnostics] of grouped) {
+    collection.set(vscode.Uri.file(file), diagnostics);
+  }
+
+  activeLogger.info("[Extension.refreshModelDiagnostics] refreshed", {
+    files: grouped.size,
+    diagnostics: findings.length,
+  });
 }
 
 export function deactivate(): void {
@@ -240,7 +279,8 @@ function registerProviders(
       ":",
       ">",
     ),
-    vscode.languages.registerDefinitionProvider(laravelSelector, new LaravelDefinitionProvider(getIndex, activeLogger)),
+    vscode.languages.registerDefinitionProvider([...laravelSelector, ...frontendSelector], new LaravelDefinitionProvider(getIndex, activeLogger)),
+    vscode.languages.registerHoverProvider(frontendSelector, new LaravelHoverProvider(getIndex, activeLogger)),
     vscode.languages.registerDocumentLinkProvider(laravelSelector, new LaravelDocumentLinkProvider(getIndex, activeLogger)),
     vscode.languages.registerReferenceProvider(laravelSelector, new LaravelReferenceProvider(getIndex, activeLogger)),
     vscode.languages.registerCodeLensProvider(codeLensSelector, new LaravelCodeLensProvider(getIndex, activeLogger)),

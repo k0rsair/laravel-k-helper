@@ -15,7 +15,8 @@
 - Reverse references from controller methods to matching route declarations.
 - CodeLens over controller methods that have route declarations.
 - Multi-route picker for controller method CodeLens when more than one route references the method.
-- Frontend response property completions for matched Laravel routes with statically indexed literal array / JSON response shapes.
+- Frontend response property completions for matched Laravel routes with statically indexed literal array / JSON response shapes, conservative Laravel API resources, and response-field hover/definition back to backend source when confidence is high.
+- Blade component prop/slot metadata, Livewire `wire:model` / `wire:click` member navigation, Inertia page-prop indexing, Filament field/action surfaces, and quiet Eloquent model diagnostics for migration-backed schema mismatches.
 - Route middleware alias indexing, completion, and definition support for `Route::middleware(...)`, route declarations, and controller middleware calls.
 - Artisan command name indexing, completion, and definition support for static command classes declared with `$signature` or `$name`.
 - Filesystem disk completions for `Storage::disk/fake/persistentFake(...)`, upload `store*` disk arguments, and `filesystems.php` default/cloud values from `config/filesystems.php` `disks` keys.

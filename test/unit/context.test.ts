@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  resolveBladeComponentAttributeContext,
   extractQuotedStringAtOffset,
   resolveBladeComponentPrefix,
+  resolveBladeComponentSlotPrefix,
   resolveEloquentCastTypeContext,
   resolveEloquentModelAttributeContext,
   resolveEloquentRelationConstraintContext,
   resolveIdeJsonStringContext,
+  resolveLivewireDirectiveContext,
   resolveLivewireComponentPrefix,
   resolveStringContext,
 } from "../../src/context/completionContext";
@@ -76,6 +79,10 @@ describe("completion context", () => {
     expect(resolveStringContext("Inertia::render('Users/", "php")).toMatchObject({
       kind: "inertia-page",
       prefix: "Users/",
+    });
+    expect(resolveStringContext("$page.props.filt", "vue")).toMatchObject({
+      kind: "inertia-prop",
+      prefix: "filt",
     });
     expect(resolveStringContext("Route::inertia('/users', 'Users/", "php")).toMatchObject({
       kind: "inertia-page",
@@ -394,6 +401,14 @@ describe("completion context", () => {
       kind: "filament-resource",
       prefix: "App\\Filament\\Resources\\User",
     });
+    expect(resolveStringContext("TextInput::make('na", "php")).toMatchObject({
+      kind: "filament-field",
+      prefix: "na",
+    });
+    expect(resolveStringContext("Action::make('arch", "php")).toMatchObject({
+      kind: "filament-action",
+      prefix: "arch",
+    });
   });
 
   it("resolves Nova resource registration contexts", () => {
@@ -456,11 +471,26 @@ describe("completion context", () => {
     expect(resolveBladeComponentPrefix("<x-user-")).toMatchObject({
       prefix: "user.",
     });
+    expect(resolveBladeComponentAttributeContext("<x-user-card tit")).toMatchObject({
+      componentName: "user.card",
+      prefix: "tit",
+    });
+    expect(resolveBladeComponentSlotPrefix("<x-slot:foot")).toMatchObject({
+      prefix: "foot",
+    });
   });
 
   it("resolves Livewire component tag prefixes", () => {
     expect(resolveLivewireComponentPrefix("<livewire:admin.")).toMatchObject({
       prefix: "admin.",
+    });
+    expect(resolveLivewireDirectiveContext("<input wire:model=\"sea")).toMatchObject({
+      kind: "property",
+      prefix: "sea",
+    });
+    expect(resolveLivewireDirectiveContext("<button wire:click=\"archiveSel")).toMatchObject({
+      kind: "action",
+      prefix: "archiveSel",
     });
   });
 

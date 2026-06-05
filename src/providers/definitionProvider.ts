@@ -4,10 +4,14 @@ import {
   resolveEloquentRelationConstraintContext,
   resolveStringContext,
 } from "../context/completionContext";
+import { resolveFrontendResponseFieldContext } from "../context/frontendResponseContext";
+import { resolvePhpTypedMemberReferenceContext } from "../context/phpDefinitionContext";
 import type { LaravelIndex } from "../indexer";
 import type { LaravelIndexKind } from "../indexer/types";
 import type { Logger } from "../logging/logger";
 import { resolveBoundImplementationDefinition } from "./boundDefinitionResolver";
+
+const FRONTEND_RESPONSE_LANGUAGES = new Set(["javascript", "javascriptreact", "typescript", "typescriptreact", "vue", "svelte"]);
 
 export class LaravelDefinitionProvider implements vscode.DefinitionProvider {
   public constructor(
@@ -23,8 +27,142 @@ export class LaravelDefinitionProvider implements vscode.DefinitionProvider {
     if (!index) {
       return undefined;
     }
-
     const line = document.lineAt(position.line).text;
+
+    if (FRONTEND_RESPONSE_LANGUAGES.has(document.languageId)) {
+      const fieldContext = resolveFrontendResponseFieldContext(document.getText(), document.offsetAt(position));
+      if (fieldContext.kind !== "response-field") {
+        this.logger.debug("[LaravelDefinitionProvider.provide] no frontend response field context", {
+          file: document.uri.fsPath,
+          reason: fieldContext.reason,
+        });
+      } else {
+        const item = index.frontendResponseField(fieldContext.request, fieldContext.fieldPath);
+        if (!item) {
+          this.logger.debug("[LaravelDefinitionProvider.provide] no frontend response field match", {
+            file: document.uri.fsPath,
+            requestKind: fieldContext.request.kind,
+            requestValue: fieldContext.request.value,
+            method: fieldContext.request.method,
+            fieldPath: fieldContext.fieldPath,
+          });
+          return undefined;
+        }
+
+        this.logger.debug("[LaravelDefinitionProvider.provide] frontend response field match", {
+          file: document.uri.fsPath,
+          requestKind: fieldContext.request.kind,
+          requestValue: fieldContext.request.value,
+          method: fieldContext.request.method,
+          fieldPath: fieldContext.fieldPath,
+          targetFile: item.source.file,
+          responseSourceKind: item.responseSourceKind,
+          responseSourceClass: item.responseSourceClass,
+        });
+
+        return new vscode.Location(
+          vscode.Uri.file(item.source.file),
+          new vscode.Position(item.source.line, item.source.character),
+        );
+      }
+
+      const inertiaPropReference = extractInertiaPropReferenceAtOffset(line, position.character);
+      const inertiaPage = inertiaPropReference ? index.findInertiaPageForFile(document.uri.fsPath) : undefined;
+      if (inertiaPropReference && inertiaPage?.key) {
+        const item = index.findInertiaProp(inertiaPage.key, inertiaPropReference.fieldPath);
+        if (!item) {
+          this.logger.debug("[LaravelDefinitionProvider.provide] no inertia prop match", {
+            file: document.uri.fsPath,
+            page: inertiaPage.key,
+            fieldPath: inertiaPropReference.fieldPath,
+          });
+          return undefined;
+        }
+
+        return new vscode.Location(
+          vscode.Uri.file(item.source.file),
+          new vscode.Position(item.source.line, item.source.character),
+        );
+      }
+
+      return undefined;
+    }
+    if (document.languageId === "blade") {
+      const bladeComponentPropReference = extractBladeComponentPropReferenceAtOffset(line, position.character);
+      if (bladeComponentPropReference) {
+        const item = index.findBladeComponentProp(bladeComponentPropReference.componentName, bladeComponentPropReference.attributeName);
+        if (!item) {
+          this.logger.debug("[LaravelDefinitionProvider.provide] no blade component prop match", bladeComponentPropReference);
+          return undefined;
+        }
+
+        return new vscode.Location(
+          vscode.Uri.file(item.source.file),
+          new vscode.Position(item.source.line, item.source.character),
+        );
+      }
+
+      const bladeSlotReference = extractBladeComponentSlotReferenceAtOffset(line, position.character);
+      if (bladeSlotReference) {
+        const item = index
+          .all("blade-component-slot")
+          .find((slot) => slot.key === bladeSlotReference.slotName);
+        if (!item) {
+          this.logger.debug("[LaravelDefinitionProvider.provide] no blade component slot match", bladeSlotReference);
+          return undefined;
+        }
+
+        return new vscode.Location(
+          vscode.Uri.file(item.source.file),
+          new vscode.Position(item.source.line, item.source.character),
+        );
+      }
+
+      const livewireDirectiveReference = extractLivewireDirectiveReferenceAtOffset(line, position.character);
+      const livewireComponent = livewireDirectiveReference ? index.findLivewireComponentForFile(document.uri.fsPath) : undefined;
+      if (livewireDirectiveReference && livewireComponent?.key) {
+        const item =
+          livewireDirectiveReference.kind === "property"
+            ? index.findLivewireProperty(livewireComponent.key, livewireDirectiveReference.value)
+            : index.findLivewireAction(livewireComponent.key, livewireDirectiveReference.value);
+        if (!item) {
+          this.logger.debug("[LaravelDefinitionProvider.provide] no livewire member match", {
+            componentName: livewireComponent.key,
+            ...livewireDirectiveReference,
+          });
+          return undefined;
+        }
+
+        return new vscode.Location(
+          vscode.Uri.file(item.source.file),
+          new vscode.Position(item.source.line, item.source.character),
+        );
+      }
+    }
+
+    if (document.languageId === "php") {
+      const phpMemberContext = resolvePhpTypedMemberReferenceContext(document.getText(), document.offsetAt(position));
+      if (phpMemberContext) {
+        const item =
+          index.findEloquentField(phpMemberContext.abstractClass, phpMemberContext.member)
+          ?? index.findEloquentRelation(phpMemberContext.abstractClass, phpMemberContext.member);
+        if (item) {
+          this.logger.debug("[LaravelDefinitionProvider.provide] php eloquent member match", {
+            file: document.uri.fsPath,
+            receiver: phpMemberContext.receiver,
+            abstractClass: phpMemberContext.abstractClass,
+            member: phpMemberContext.member,
+            targetFile: item.source.file,
+          });
+
+          return new vscode.Location(
+            vscode.Uri.file(item.source.file),
+            new vscode.Position(item.source.line, item.source.character),
+          );
+        }
+      }
+    }
+
     const boundSource = resolveBoundImplementationDefinition(index, this.logger, document.getText(), document.offsetAt(position));
     if (boundSource) {
       return new vscode.Location(
@@ -296,6 +434,107 @@ function wordRangeAtOffset(line: string, offset: number): { start: number; end: 
   }
 
   return { start, end };
+}
+
+function wordRangeWithHyphenAtOffset(line: string, offset: number): { start: number; end: number } | undefined {
+  const boundedOffset = Math.max(0, Math.min(offset, line.length));
+  let start = boundedOffset;
+  let end = boundedOffset;
+
+  while (start > 0 && /[A-Za-z0-9_-]/.test(line[start - 1] ?? "")) {
+    start -= 1;
+  }
+  while (end < line.length && /[A-Za-z0-9_-]/.test(line[end] ?? "")) {
+    end += 1;
+  }
+
+  if (start === end) {
+    return undefined;
+  }
+
+  return { start, end };
+}
+
+function extractBladeComponentPropReferenceAtOffset(
+  line: string,
+  offset: number,
+): { componentName: string; attributeName: string } | undefined {
+  const wordRange = wordRangeWithHyphenAtOffset(line, offset);
+  if (!wordRange) {
+    return undefined;
+  }
+
+  const prefix = line.slice(0, wordRange.end);
+  const match = /<x-([A-Za-z0-9_.:-]+)\b[^>]*\s:?\s*([A-Za-z_][A-Za-z0-9_-]*)$/.exec(prefix);
+  if (!match?.[1] || !match[2]) {
+    return undefined;
+  }
+
+  return {
+    componentName: match[1].replace(/-/g, "."),
+    attributeName: match[2],
+  };
+}
+
+function extractBladeComponentSlotReferenceAtOffset(line: string, offset: number): { slotName: string } | undefined {
+  const wordRange = wordRangeWithHyphenAtOffset(line, offset);
+  if (!wordRange) {
+    return undefined;
+  }
+
+  const prefix = line.slice(0, wordRange.end);
+  const match = /<x-slot:([A-Za-z0-9_-]+)$/.exec(prefix);
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  return { slotName: match[1] };
+}
+
+function extractLivewireDirectiveReferenceAtOffset(
+  line: string,
+  offset: number,
+): { kind: "property" | "action"; value: string } | undefined {
+  const quoted = extractQuotedStringAtOffset(line, offset);
+  if (!quoted?.value) {
+    return undefined;
+  }
+
+  const beforeQuote = line.slice(0, quoted.start);
+  if (/wire:(?:model|key)(?:\.[A-Za-z0-9_.:-]+)?=\s*['"]$/.test(beforeQuote)) {
+    return { kind: "property", value: quoted.value.split(".")[0] ?? quoted.value };
+  }
+  if (/wire:(?:click|submit|change|keydown|keyup)(?:\.[A-Za-z0-9_.:-]+)?=\s*['"]$/.test(beforeQuote)) {
+    return { kind: "action", value: quoted.value.split("(")[0] ?? quoted.value };
+  }
+
+  return undefined;
+}
+
+function extractInertiaPropReferenceAtOffset(
+  line: string,
+  offset: number,
+): { fieldPath: string[] } | undefined {
+  const boundedOffset = Math.max(0, Math.min(offset, line.length));
+  let start = boundedOffset;
+  let end = boundedOffset;
+
+  while (start > 0 && /[A-Za-z0-9_$.]/.test(line[start - 1] ?? "")) {
+    start -= 1;
+  }
+  while (end < line.length && /[A-Za-z0-9_$.]/.test(line[end] ?? "")) {
+    end += 1;
+  }
+
+  const value = line.slice(start, end);
+  const match = /\$?page\.props\.([A-Za-z0-9_.]+)$/.exec(value);
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  return {
+    fieldPath: match[1].split(".").filter(Boolean),
+  };
 }
 
 function relationSegmentAtOffset(value: string, offset: number): { name: string; path: string[] } {

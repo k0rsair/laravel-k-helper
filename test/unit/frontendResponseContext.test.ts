@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveFrontendResponseCompletionContext } from "../../src/context/frontendResponseContext";
+import {
+  resolveFrontendResponseCompletionContext,
+  resolveFrontendResponseFieldContext,
+} from "../../src/context/frontendResponseContext";
 
 describe("frontend response context", () => {
   it("resolves axios response.data chains", () => {
@@ -74,6 +77,38 @@ describe("frontend response context", () => {
       },
     });
   });
+
+  it("resolves exact response.data field references for definition and hover", () => {
+    const text = "const response = await axios.get('/api/users/1/resource-summary');\nresponse.data.contact.email;";
+
+    expect(resolveFieldAt(text, "email")).toMatchObject({
+      kind: "response-field",
+      path: ["contact"],
+      field: "email",
+      fieldPath: ["contact", "email"],
+      request: {
+        kind: "url",
+        value: "/api/users/1/resource-summary",
+        method: "GET",
+      },
+    });
+  });
+
+  it("resolves exact destructured data field references", () => {
+    const text = "const { data } = await axios.get('/api/users/1/resource-collection');\nconsole.log(data.meta.count);";
+
+    expect(resolveFieldAt(text, "count")).toMatchObject({
+      kind: "response-field",
+      path: ["meta"],
+      field: "count",
+      fieldPath: ["meta", "count"],
+      request: {
+        kind: "url",
+        value: "/api/users/1/resource-collection",
+        method: "GET",
+      },
+    });
+  });
 });
 
 function resolveAt(text: string, fragment: string) {
@@ -82,4 +117,12 @@ function resolveAt(text: string, fragment: string) {
     throw new Error(`Missing fragment: ${fragment}`);
   }
   return resolveFrontendResponseCompletionContext(text, index + fragment.length);
+}
+
+function resolveFieldAt(text: string, fragment: string) {
+  const index = text.lastIndexOf(fragment);
+  if (index < 0) {
+    throw new Error(`Missing fragment: ${fragment}`);
+  }
+  return resolveFrontendResponseFieldContext(text, index + Math.max(0, fragment.length - 1));
 }

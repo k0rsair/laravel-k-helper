@@ -50,7 +50,7 @@ export class LaravelIndex {
       config,
       translations,
       env,
-      bladeComponents,
+      bladeComponentIndex,
       validationRules,
       requestFields,
       routeMiddleware,
@@ -102,7 +102,9 @@ export class LaravelIndex {
       config,
       translations,
       env,
-      bladeComponents,
+      bladeComponents: bladeComponentIndex.components,
+      bladeComponentProps: bladeComponentIndex.props,
+      bladeComponentSlots: bladeComponentIndex.slots,
       validationRules,
       requestFields,
       routeMiddleware,
@@ -122,8 +124,15 @@ export class LaravelIndex {
       artisanCommands,
       responseFields,
       livewireComponents: ecosystemItems.livewireComponents,
+      livewireProperties: ecosystemItems.livewireProperties,
+      livewireActions: ecosystemItems.livewireActions,
+      livewireEvents: ecosystemItems.livewireEvents,
       inertiaPages: ecosystemItems.inertiaPages,
+      inertiaProps: ecosystemItems.inertiaProps,
       filamentResources: ecosystemItems.filamentResources,
+      filamentPages: ecosystemItems.filamentPages,
+      filamentFields: ecosystemItems.filamentFields,
+      filamentActions: ecosystemItems.filamentActions,
       novaResources: ecosystemItems.novaResources,
       ideJsonRules,
     };
@@ -149,6 +158,8 @@ export class LaravelIndex {
       translations: this.snapshot?.translations.length ?? 0,
       env: this.snapshot?.env.length ?? 0,
       bladeComponents: this.snapshot?.bladeComponents.length ?? 0,
+      bladeComponentProps: this.snapshot?.bladeComponentProps.length ?? 0,
+      bladeComponentSlots: this.snapshot?.bladeComponentSlots.length ?? 0,
       validationRules: this.snapshot?.validationRules.length ?? 0,
       requestFields: this.snapshot?.requestFields.length ?? 0,
       routeMiddleware: this.snapshot?.routeMiddleware.length ?? 0,
@@ -167,8 +178,15 @@ export class LaravelIndex {
       artisanCommands: this.snapshot?.artisanCommands.length ?? 0,
       responseFields: this.snapshot?.responseFields.length ?? 0,
       livewireComponents: this.snapshot?.livewireComponents.length ?? 0,
+      livewireProperties: this.snapshot?.livewireProperties.length ?? 0,
+      livewireActions: this.snapshot?.livewireActions.length ?? 0,
+      livewireEvents: this.snapshot?.livewireEvents.length ?? 0,
       inertiaPages: this.snapshot?.inertiaPages.length ?? 0,
+      inertiaProps: this.snapshot?.inertiaProps.length ?? 0,
       filamentResources: this.snapshot?.filamentResources.length ?? 0,
+      filamentPages: this.snapshot?.filamentPages.length ?? 0,
+      filamentFields: this.snapshot?.filamentFields.length ?? 0,
+      filamentActions: this.snapshot?.filamentActions.length ?? 0,
       novaResources: this.snapshot?.novaResources.length ?? 0,
     };
   }
@@ -194,6 +212,10 @@ export class LaravelIndex {
         return snapshot.env;
       case "blade-component":
         return snapshot.bladeComponents;
+      case "blade-component-prop":
+        return snapshot.bladeComponentProps;
+      case "blade-component-slot":
+        return snapshot.bladeComponentSlots;
       case "validation-rule":
         return snapshot.validationRules;
       case "request-field":
@@ -230,10 +252,24 @@ export class LaravelIndex {
         return snapshot.responseFields;
       case "livewire-component":
         return snapshot.livewireComponents;
+      case "livewire-property":
+        return snapshot.livewireProperties;
+      case "livewire-action":
+        return snapshot.livewireActions;
+      case "livewire-event":
+        return snapshot.livewireEvents;
       case "inertia-page":
         return snapshot.inertiaPages;
+      case "inertia-prop":
+        return snapshot.inertiaProps;
       case "filament-resource":
         return snapshot.filamentResources;
+      case "filament-page":
+        return snapshot.filamentPages;
+      case "filament-field":
+        return snapshot.filamentFields;
+      case "filament-action":
+        return snapshot.filamentActions;
       case "nova-resource":
         return snapshot.novaResources;
     }
@@ -319,6 +355,139 @@ export class LaravelIndex {
     }).sort((a, b) => responseFieldSortKey(a).localeCompare(responseFieldSortKey(b)));
   }
 
+  public frontendResponseField(
+    reference: { kind: "route-name" | "url"; value: string; method?: string },
+    fieldPath: string[],
+  ): IndexedItem | undefined {
+    const route =
+      reference.kind === "route-name"
+        ? this.findHttpRouteByName(reference.value)
+        : this.findHttpRouteByRequest(reference.value, reference.method);
+    if (!route) {
+      this.logger.debug("[LaravelIndex.frontendResponseField] no route match", {
+        kind: reference.kind,
+        value: reference.value,
+        method: reference.method,
+        fieldPath,
+      });
+      return undefined;
+    }
+
+    const key = fieldPath.join(".");
+    const match = this
+      .all("response-field")
+      .find((item) => responseFieldBelongsToRoute(item, route) && (item.responseFieldPath ?? item.key.split(".")).join(".") === key);
+    if (!match) {
+      this.logger.debug("[LaravelIndex.frontendResponseField] no response field match", {
+        route: route.uri ?? route.key,
+        routeName: route.routeName,
+        method: route.httpMethod,
+        fieldPath,
+      });
+      return undefined;
+    }
+
+    return match;
+  }
+
+  public bladeComponentPropCompletions(componentReference: string, prefix: string): IndexedItem[] {
+    return this
+      .all("blade-component-prop")
+      .filter((item) => bladeComponentNameMatches(item.componentName ?? "", componentReference) && item.key.startsWith(prefix));
+  }
+
+  public bladeComponentSlotCompletions(componentReference: string, prefix: string): IndexedItem[] {
+    return this
+      .all("blade-component-slot")
+      .filter((item) => bladeComponentNameMatches(item.componentName ?? "", componentReference) && item.key.startsWith(prefix));
+  }
+
+  public findBladeComponentProp(componentReference: string, propName: string): IndexedItem | undefined {
+    return this
+      .all("blade-component-prop")
+      .find((item) => bladeComponentNameMatches(item.componentName ?? "", componentReference) && item.key === propName);
+  }
+
+  public findBladeComponentSlot(componentReference: string, slotName: string): IndexedItem | undefined {
+    return this
+      .all("blade-component-slot")
+      .find((item) => bladeComponentNameMatches(item.componentName ?? "", componentReference) && item.key === slotName);
+  }
+
+  public findLivewireComponentForFile(file: string): IndexedItem | undefined {
+    return this.all("livewire-component").find((item) => item.source.file === file && item.detail === "Livewire view component");
+  }
+
+  public livewirePropertyCompletions(componentName: string, prefix: string): IndexedItem[] {
+    return this.all("livewire-property").filter((item) => item.componentName === componentName && item.key.startsWith(prefix));
+  }
+
+  public livewireActionCompletions(componentName: string, prefix: string): IndexedItem[] {
+    return this.all("livewire-action").filter((item) => item.componentName === componentName && item.key.startsWith(prefix));
+  }
+
+  public findLivewireProperty(componentName: string, propertyName: string): IndexedItem | undefined {
+    return this.all("livewire-property").find((item) => item.componentName === componentName && item.key === propertyName);
+  }
+
+  public findLivewireAction(componentName: string, actionName: string): IndexedItem | undefined {
+    return this.all("livewire-action").find((item) => item.componentName === componentName && item.key === actionName);
+  }
+
+  public findInertiaPageForFile(file: string): IndexedItem | undefined {
+    return this.all("inertia-page").find((item) => item.source.file === file);
+  }
+
+  public inertiaPropCompletions(pageName: string, prefix: string, path: string[] = []): IndexedItem[] {
+    const seen = new Set<string>();
+    return this
+      .all("inertia-prop")
+      .filter((item) => item.componentName === pageName)
+      .flatMap((item) => {
+        const propPath = item.responseFieldPath ?? item.key.split(".");
+        if (!pathPrefixMatches(propPath, path)) {
+          return [];
+        }
+        const remainingPath = propPath.slice(path.length);
+        if (remainingPath.length === 0) {
+          return [];
+        }
+        const key = remainingPath.join(".");
+        if (!key.startsWith(prefix) || seen.has(key)) {
+          return [];
+        }
+        seen.add(key);
+        return [{
+          ...item,
+          key,
+          label: key,
+        }];
+      });
+  }
+
+  public findInertiaProp(pageName: string, fieldPath: string[]): IndexedItem | undefined {
+    const key = fieldPath.join(".");
+    return this
+      .all("inertia-prop")
+      .find((item) => item.componentName === pageName && (item.responseFieldPath ?? item.key.split(".")).join(".") === key);
+  }
+
+  public filamentFieldCompletions(prefix: string): IndexedItem[] {
+    return this.all("filament-field").filter((item) => item.key.startsWith(prefix));
+  }
+
+  public filamentActionCompletions(prefix: string): IndexedItem[] {
+    return this.all("filament-action").filter((item) => item.key.startsWith(prefix));
+  }
+
+  public findFilamentField(name: string): IndexedItem | undefined {
+    return this.all("filament-field").find((item) => item.key === name);
+  }
+
+  public findFilamentAction(name: string): IndexedItem | undefined {
+    return this.all("filament-action").find((item) => item.key === name);
+  }
+
   public routeActionCompletions(file: string, offset: number, prefix: string, controllerReference?: string): IndexedItem[] {
     if (controllerReference) {
       const controller = this.findControllerClassByReference(controllerReference);
@@ -355,8 +524,23 @@ export class LaravelIndex {
 
   public eloquentFieldCompletions(file: string, prefix: string, modelReference?: string): IndexedItem[] {
     const model = modelReference ? this.findEloquentModelByReference(modelReference) : this.findEloquentModelForFile(file);
+    if (modelReference && !model) {
+      return [];
+    }
     const fields = model ? this.all("eloquent-field").filter((item) => item.modelClass === model.modelClass) : this.all("eloquent-field");
     return fields.filter((item) => item.key.startsWith(prefix));
+  }
+
+  public eloquentMemberCompletions(file: string, prefix: string, modelReference?: string): IndexedItem[] {
+    const model = modelReference ? this.findEloquentModelByReference(modelReference) : this.findEloquentModelForFile(file);
+    if (!model) {
+      return [];
+    }
+
+    return [
+      ...this.all("eloquent-field").filter((item) => item.modelClass === model.modelClass && item.key.startsWith(prefix)),
+      ...this.all("eloquent-relation").filter((item) => item.modelClass === model.modelClass && item.key.startsWith(prefix)),
+    ];
   }
 
   public eloquentCastTypeCompletions(
@@ -397,6 +581,24 @@ export class LaravelIndex {
     }
     const relations = this.all("eloquent-relation").filter((item) => item.modelClass === model.modelClass);
     return relations.filter((item) => item.key.startsWith(prefix));
+  }
+
+  public findEloquentField(modelReference: string, key: string): IndexedItem | undefined {
+    const model = this.findEloquentModelByReference(modelReference);
+    if (!model) {
+      return undefined;
+    }
+
+    return this.all("eloquent-field").find((item) => item.modelClass === model.modelClass && item.key === key);
+  }
+
+  public findEloquentRelation(modelReference: string, key: string): IndexedItem | undefined {
+    const model = this.findEloquentModelByReference(modelReference);
+    if (!model) {
+      return undefined;
+    }
+
+    return this.all("eloquent-relation").find((item) => item.modelClass === model.modelClass && item.key === key);
   }
 
   public databaseColumnCompletions(prefix: string, table?: string): IndexedItem[] {
@@ -656,6 +858,20 @@ function normalizeHttpUri(uri: string): string {
 
 function normalizeClassReference(reference: string): string {
   return reference.replace(/^\\/, "").replace(/::class$/, "");
+}
+
+function normalizeBladeComponentName(reference: string): string {
+  return reference.replace(/^x-/, "").replace(/:/g, ".");
+}
+
+function bladeComponentNameMatches(candidate: string, reference: string): boolean {
+  const normalizedCandidate = normalizeBladeComponentName(candidate);
+  const normalizedReference = normalizeBladeComponentName(reference);
+  return (
+    normalizedCandidate === normalizedReference ||
+    normalizedCandidate.replace(/\./g, "-") === normalizedReference ||
+    normalizedCandidate === normalizedReference.replace(/\./g, "-")
+  );
 }
 
 function classReferenceMatches(candidate: string, normalizedReference: string): boolean {

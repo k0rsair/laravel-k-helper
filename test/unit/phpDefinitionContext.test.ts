@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveBoundImplementationDefinitionContext } from "../../src/context/phpDefinitionContext";
+import { resolveBoundImplementationDefinitionContext, resolvePhpTypedMemberReferenceContext } from "../../src/context/phpDefinitionContext";
 
 const phpText = `<?php
 
@@ -7,6 +7,8 @@ namespace App\\Services;
 
 use App\\Contracts\\PublisherInterface;
 use App\\Contracts\\{PublisherInterface as GroupedPublisherInterface};
+use App\\Models\\OverwrittenPdfCaseSize;
+use App\\Models\\City;
 
 class PublishingWorkflow
 {
@@ -34,6 +36,13 @@ class PublishingWorkflow
     public function grouped(GroupedPublisherInterface $groupedPublisher): bool
     {
         return $groupedPublisher->publish('grouped');
+    }
+
+    public function created(OverwrittenPdfCaseSize $caseSize): void
+    {
+        City::all()->each(function (City $city) use ($caseSize) {
+            $material = $caseSize->material;
+        });
     }
 
 }
@@ -113,6 +122,14 @@ describe("PHP bound implementation definition context", () => {
       reason: "no-typed-receiver",
     });
   });
+
+  it("resolves typed property access on variables captured into closures", () => {
+    expect(resolveMemberAt("$caseSize->material")).toMatchObject({
+      receiver: "$caseSize",
+      member: "material",
+      abstractClass: "App\\Models\\OverwrittenPdfCaseSize",
+    });
+  });
 });
 
 function resolveAt(fragment: string, word?: string) {
@@ -123,4 +140,14 @@ function resolveAt(fragment: string, word?: string) {
   const target = word ?? fragment.split("->").pop() ?? fragment;
   const wordStart = fragmentStart + fragment.lastIndexOf(target);
   return resolveBoundImplementationDefinitionContext(phpText, wordStart + Math.floor(target.length / 2));
+}
+
+function resolveMemberAt(fragment: string, word?: string) {
+  const fragmentStart = phpText.indexOf(fragment);
+  if (fragmentStart < 0) {
+    throw new Error(`Missing test fragment: ${fragment}`);
+  }
+  const target = word ?? fragment.split("->").pop() ?? fragment;
+  const wordStart = fragmentStart + fragment.lastIndexOf(target);
+  return resolvePhpTypedMemberReferenceContext(phpText, wordStart + Math.floor(target.length / 2));
 }

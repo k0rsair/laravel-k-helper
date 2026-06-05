@@ -2,10 +2,17 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\LabelsController;
+use Inertia\Inertia;
 
 Route::get('/', fn () => view('welcome'))->name('home');
 Route::get('/users', [UserController::class, 'index'])->name('users.index');
 Route::post('/users', [UserController::class, 'store'])->name('users.store');
+Route::get('/spa/users', fn () => Inertia::render('Users/Index', [
+    'users' => [],
+    'filters' => [
+        'search' => '',
+    ],
+]))->name('users.spa');
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/dashboard', fn () => view('welcome'))->name('dashboard');
 });

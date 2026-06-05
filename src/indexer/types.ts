@@ -19,6 +19,9 @@ export interface IndexedItem {
   relatedModelClass?: string;
   table?: string;
   columnType?: string;
+  nullable?: boolean;
+  defaultValue?: string;
+  enumValues?: string[];
   middlewareClass?: string;
   uri?: string;
   httpMethod?: string;
@@ -34,6 +37,9 @@ export interface IndexedItem {
   responseControllerClass?: string;
   responseControllerMethod?: string;
   responseFieldPath?: string[];
+  responseSourceKind?: string;
+  responseSourceClass?: string;
+  componentName?: string;
 }
 
 export type IdeJsonCompletionKind =
@@ -72,6 +78,8 @@ export type LaravelIndexKind =
   | "translation"
   | "env"
   | "blade-component"
+  | "blade-component-prop"
+  | "blade-component-slot"
   | "validation-rule"
   | "request-field"
   | "route-middleware"
@@ -90,8 +98,15 @@ export type LaravelIndexKind =
   | "artisan-command"
   | "response-field"
   | "livewire-component"
+  | "livewire-property"
+  | "livewire-action"
+  | "livewire-event"
   | "inertia-page"
+  | "inertia-prop"
   | "filament-resource"
+  | "filament-page"
+  | "filament-field"
+  | "filament-action"
   | "nova-resource";
 
 export interface LaravelIndexSnapshot {
@@ -104,6 +119,8 @@ export interface LaravelIndexSnapshot {
   translations: IndexedItem[];
   env: IndexedItem[];
   bladeComponents: IndexedItem[];
+  bladeComponentProps: IndexedItem[];
+  bladeComponentSlots: IndexedItem[];
   validationRules: IndexedItem[];
   requestFields: IndexedItem[];
   routeMiddleware: IndexedItem[];
@@ -123,8 +140,15 @@ export interface LaravelIndexSnapshot {
   artisanCommands: IndexedItem[];
   responseFields: IndexedItem[];
   livewireComponents: IndexedItem[];
+  livewireProperties: IndexedItem[];
+  livewireActions: IndexedItem[];
+  livewireEvents: IndexedItem[];
   inertiaPages: IndexedItem[];
+  inertiaProps: IndexedItem[];
   filamentResources: IndexedItem[];
+  filamentPages: IndexedItem[];
+  filamentFields: IndexedItem[];
+  filamentActions: IndexedItem[];
   novaResources: IndexedItem[];
   ideJsonRules: IdeJsonCompletionRule[];
 }
@@ -137,6 +161,8 @@ export interface IndexStats {
   translations: number;
   env: number;
   bladeComponents: number;
+  bladeComponentProps: number;
+  bladeComponentSlots: number;
   validationRules: number;
   requestFields: number;
   routeMiddleware: number;
@@ -155,8 +181,15 @@ export interface IndexStats {
   artisanCommands: number;
   responseFields: number;
   livewireComponents: number;
+  livewireProperties: number;
+  livewireActions: number;
+  livewireEvents: number;
   inertiaPages: number;
+  inertiaProps: number;
   filamentResources: number;
+  filamentPages: number;
+  filamentFields: number;
+  filamentActions: number;
   novaResources: number;
 }
 

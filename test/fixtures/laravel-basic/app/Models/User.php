@@ -13,10 +13,12 @@ class User extends Authenticatable
     protected $fillable = [
         'name',
         'email',
+        'nickname',
     ];
 
     protected $casts = [
         'settings' => 'array',
+        'is_active' => 'array',
     ];
 
     protected function casts(): array

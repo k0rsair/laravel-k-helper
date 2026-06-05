@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.8
+
+- Extended frontend response-field indexing to understand Laravel `JsonResource` classes, nested resource payloads, and conservative `ResourceCollection` / `::collection(...)` shapes when their object keys are statically recoverable.
+- Added hover and go-to-definition from frontend `response.data.*` / `data.*` fields back to the indexed backend response source when the route and field path are resolved with high confidence.
+- Added Blade component prop and slot indexing from class and view sources, plus completions/definitions for common `<x-...>` prop and slot references.
+- Added Livewire public-property and action indexing with `wire:model` / `wire:click` completions and definitions inside component views.
+- Added Inertia page-prop indexing from static `Inertia::render(...)` payloads and conservative `$page.props.*` completions/definitions inside page components.
+- Deepened Filament indexing with resource pages, field names, and simple action names for conservative string-context completions and definitions.
+- Added Eloquent model diagnostics for unknown `$fillable` / `$guarded` / `$casts` keys and suspicious cast-type mismatches when the migration schema is statically known.
+- Added fixture coverage and unit tests for resource-backed response shapes, Blade/Livewire metadata, Inertia props, Filament sub-surfaces, and model diagnostics.
+
 ## 0.10.6
 
 - Added Artisan command-name completions for `Artisan::call(...)`, `Artisan::queue(...)`, `artisan(...)`, scheduler `command(...)`, and console command `call(...)` contexts.

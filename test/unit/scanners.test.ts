@@ -23,7 +23,17 @@ describe("Laravel indexing", () => {
     await index.reindex();
 
     expect(index.all("route").map((item) => item.key)).toEqual(
-      expect.arrayContaining(["home", "users.index", "users.store", "api.health", "api.orders.cancel", "api.profiles.update"]),
+      expect.arrayContaining([
+        "home",
+        "users.index",
+        "users.store",
+        "api.health",
+        "api.orders.cancel",
+        "api.profiles.update",
+        "api.users.resource-summary",
+        "api.users.resource-payload",
+        "api.users.resource-collection",
+      ]),
     );
     expect(index.all("http-route").map((item) => `${item.httpMethod} ${item.key}`)).toEqual(
       expect.arrayContaining([
@@ -35,6 +45,9 @@ describe("Laravel indexing", () => {
         "PATCH /api/product-statistics/{product_statistic}",
         "PATCH /api/v1/profiles/{profile}",
         "GET /api/users/{user}/summary",
+        "GET /api/users/{user}/resource-summary",
+        "GET /api/users/{user}/resource-payload",
+        "GET /api/users/{user}/resource-collection",
         "GET /users",
         "POST /users",
         "GET /labels/{projectDelivery}/{article}",
@@ -149,12 +162,22 @@ describe("Laravel indexing", () => {
     expect(index.all("blade-component").map((item) => item.key)).toEqual(
       expect.arrayContaining(["alert", "user-card"]),
     );
+    expect(index.bladeComponentPropCompletions("user-card", "ti").map((item) => item.key)).toEqual(["title"]);
+    expect(index.bladeComponentPropCompletions("alert", "me").map((item) => item.key)).toEqual(["message"]);
+    expect(index.bladeComponentSlotCompletions("user-card", "fo").map((item) => item.key)).toEqual(["footer"]);
+    expect(index.findBladeComponentProp("user-card", "highlighted")?.source.file).toContain("UserCard.php");
     expect(index.all("livewire-component").map((item) => item.key)).toEqual(
       expect.arrayContaining(["user-table", "admin.dashboard-widget"]),
     );
+    expect(index.livewirePropertyCompletions("user-table", "sea").map((item) => item.key)).toEqual(["search"]);
+    expect(index.livewireActionCompletions("user-table", "arch").map((item) => item.key)).toEqual(["archiveSelected"]);
+    expect(index.findLivewireProperty("user-table", "showArchived")?.source.file).toContain("UserTable.php");
     expect(index.all("inertia-page").map((item) => item.key)).toEqual(
       expect.arrayContaining(["Users/Index"]),
     );
+    expect(index.inertiaPropCompletions("Users/Index", "us").map((item) => item.key)).toEqual(["users"]);
+    expect(index.inertiaPropCompletions("Users/Index", "se", ["filters"]).map((item) => item.key)).toEqual(["search"]);
+    expect(index.findInertiaProp("Users/Index", ["filters", "search"])?.source.file).toContain("routes/web.php");
     expect(index.all("filament-resource").map((item) => item.key)).toEqual(
       expect.arrayContaining(["App\\Filament\\Resources\\UserResource"]),
     );
@@ -162,6 +185,12 @@ describe("Laravel indexing", () => {
       "App\\Filament\\Resources\\UserResource",
     ]);
     expect(index.findFilamentResourceByReference("UserResource")?.source.file).toContain("UserResource.php");
+    expect(index.all("filament-page").map((item) => item.key)).toEqual(
+      expect.arrayContaining(["App\\Filament\\Resources\\UserResource\\Pages\\ListUsers"]),
+    );
+    expect(index.filamentFieldCompletions("em").map((item) => item.key)).toEqual(["email"]);
+    expect(index.filamentActionCompletions("arch").map((item) => item.key)).toEqual(["archive"]);
+    expect(index.findFilamentAction("restore")?.source.file).toContain("ListUsers.php");
     expect(index.all("nova-resource").map((item) => item.key)).toEqual(
       expect.arrayContaining(["App\\Nova\\User"]),
     );
@@ -309,6 +338,19 @@ describe("Laravel indexing", () => {
         "GET /api/users/{user}/summary user.name",
         "GET /api/users/{user}/summary user.email",
         "GET /api/users/{user}/summary statusArray",
+        "GET /api/users/{user}/resource-summary id",
+        "GET /api/users/{user}/resource-summary name",
+        "GET /api/users/{user}/resource-summary contact",
+        "GET /api/users/{user}/resource-summary contact.email",
+        "GET /api/users/{user}/resource-payload user.id",
+        "GET /api/users/{user}/resource-payload user.name",
+        "GET /api/users/{user}/resource-payload user.contact.email",
+        "GET /api/users/{user}/resource-payload relatedUsers.id",
+        "GET /api/users/{user}/resource-payload relatedUsers.contact.email",
+        "GET /api/users/{user}/resource-collection data",
+        "GET /api/users/{user}/resource-collection data.id",
+        "GET /api/users/{user}/resource-collection data.contact.email",
+        "GET /api/users/{user}/resource-collection meta.count",
       ]),
     );
     expect(index.frontendResponseCompletions({ kind: "url", value: "/api/health", method: "GET" }, "st").map((item) => item.key)).toEqual([
@@ -327,6 +369,22 @@ describe("Laravel indexing", () => {
     expect(index.frontendResponseCompletions({ kind: "route-name", value: "api.users.summary" }, "status").map((item) => item.key)).toEqual([
       "statusArray",
     ]);
+    expect(index.frontendResponseCompletions({ kind: "route-name", value: "api.users.resource-summary" }, "co").map((item) => item.key)).toEqual([
+      "contact",
+      "contact.email",
+    ]);
+    expect(index.frontendResponseCompletions({ kind: "route-name", value: "api.users.resource-collection" }, "co", ["data"]).map((item) => item.key)).toEqual([
+      "contact",
+      "contact.email",
+    ]);
+    expect(index.frontendResponseField({ kind: "route-name", value: "api.users.resource-summary" }, ["contact", "email"])).toMatchObject({
+      responseSourceKind: "json-resource",
+      responseSourceClass: "App\\Http\\Resources\\UserSummaryResource",
+    });
+    expect(index.frontendResponseField({ kind: "route-name", value: "api.users.resource-collection" }, ["meta", "count"])).toMatchObject({
+      responseSourceKind: "resource-collection",
+      responseSourceClass: "App\\Http\\Resources\\UserSummaryCollection",
+    });
     expect(index.frontendResponseCompletions({ kind: "url", value: "/api/users/42/summary", method: "GET" }, "em", ["user"]).map((item) => item.key)).toEqual([
       "email",
       "email_verified_at",
@@ -359,6 +417,7 @@ describe("Laravel indexing", () => {
     expect(index.eloquentFieldCompletions(path.join(fixtureRoot, "routes", "web.php"), "set", "User").map((item) => item.key)).toEqual([
       "settings",
     ]);
+    expect(index.eloquentFieldCompletions(path.join(fixtureRoot, "routes", "web.php"), "em", "Route")).toEqual([]);
     expect(index.eloquentCastTypeCompletions(path.join(fixtureRoot, "app", "Models", "User.php"), "bo", "is_active").map((item) => item.key)).toEqual([
       "boolean",
     ]);
@@ -370,6 +429,14 @@ describe("Laravel indexing", () => {
     expect(index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "po", "User").map((item) => item.key)).toEqual([
       "posts",
     ]);
+    expect(index.eloquentMemberCompletions(path.join(fixtureRoot, "routes", "web.php"), "em", "User").map((item) => item.key)).toEqual([
+      "email",
+      "email_verified_at",
+    ]);
+    expect(index.eloquentMemberCompletions(path.join(fixtureRoot, "routes", "web.php"), "po", "User").map((item) => item.key)).toEqual([
+      "posts",
+    ]);
+    expect(index.eloquentMemberCompletions(path.join(fixtureRoot, "routes", "web.php"), "em", "Route")).toEqual([]);
     expect(index.eloquentRelationCompletions(path.join(fixtureRoot, "app", "Models", "User.php"), "").map((item) => item.key)).toEqual([
       "posts",
       "tokens",
@@ -386,6 +453,9 @@ describe("Laravel indexing", () => {
     expect(index.eloquentRelationCompletions(path.join(fixtureRoot, "routes", "web.php"), "phone", "Product").map((item) => item.key)).toEqual([
       "phoneModel",
     ]);
+    expect(index.findEloquentField("User", "email")?.source.file).toContain("2024_01_01_000000_create_users_table.php");
+    expect(index.findEloquentRelation("User", "posts")?.source.file).toContain("User.php");
+    expect(index.findEloquentField("Route", "email")).toBeUndefined();
     expect(index.eloquentScopeCompletions(path.join(fixtureRoot, "routes", "web.php"), "rea", "Product").map((item) => item.key)).toEqual([
       "ready",
     ]);
@@ -433,6 +503,7 @@ describe("Laravel indexing", () => {
     ]);
     expect(index.ideJsonCompletions(index.ideJsonRuleFor("function", "package_route_target", 0)!, "us").map((item) => item.key)).toEqual([
       "users.index",
+      "users.spa",
       "users.store",
     ]);
     expect(index.ideJsonCompletions(index.ideJsonRuleFor("function", "package_mode", 0)!, "a").map((item) => item.key)).toEqual([

@@ -62,7 +62,7 @@ Prioritize the next work in this order:
 ## Tasks
 
 ### Phase 1: Frontend Response Intelligence V2
-- [ ] Task 1: Extend backend response indexing to understand Laravel API resources and conservative typed payloads.
+- [x] Task 1: Extend backend response indexing to understand Laravel API resources and conservative typed payloads.
 
   Deliverable: index response fields from `JsonResource::make(...)`, `ResourceCollection`, `AnonymousResourceCollection`, `new UserResource($user)`, `UserResource::collection(...)`, and `toArray()` methods when the resulting keys are statically recoverable. Preserve the current "no guess over bad guess" rule.
 
@@ -70,7 +70,7 @@ Prioritize the next work in this order:
 
   Logging requirements: log resource scan coverage, extracted field counts, and DEBUG-only skip reasons such as `dynamic-resource`, `conditional-merge`, and `unsupported-collection-shape`.
 
-- [ ] Task 2: Add richer frontend response UX on top of the expanded index.
+- [x] Task 2: Add richer frontend response UX on top of the expanded index.
 
   Deliverable: keep completions conservative, add response-field hover details where the backend source is known, and add go-to-definition from `response.data.foo` / `data.user.name` to the originating controller/resource field when confidence is high.
 
@@ -78,7 +78,7 @@ Prioritize the next work in this order:
 
   Logging requirements: log successful frontend response resolution with route, backend source kind, and field path; log DEBUG miss reasons such as `ambiguous-route`, `missing-field-source`, and `unsupported-response-chain`.
 
-- [ ] Task 3: Add fixtures, regression tests, and docs for response intelligence v2.
+- [x] Task 3: Add fixtures, regression tests, and docs for response intelligence v2.
 
   Deliverable: cover literal arrays, `response()->json(...)`, `collect([...])`, `JsonResource`, resource collections, ambiguous routes, and negative cases that must return no completions. Update README, CHANGELOG, and `docs/roadmap.md` with the supported response-shape matrix.
 
@@ -87,7 +87,7 @@ Prioritize the next work in this order:
   Logging requirements: tests should assert behavior without depending on log order; docs should name the DEBUG troubleshooting categories added in Tasks 1-2.
 
 ### Phase 2: Blade And Livewire Semantic Intelligence
-- [ ] Task 4: Index Blade component prop and slot metadata from class and view sources.
+- [x] Task 4: Index Blade component prop and slot metadata from class and view sources.
 
   Deliverable: detect component constructor/public props, `@props([...])`, named slots, anonymous component props, and class/view pairings so the index can answer prop-aware Blade queries instead of only component-name lookups.
 
@@ -95,7 +95,7 @@ Prioritize the next work in this order:
 
   Logging requirements: log indexed component metadata counts and DEBUG skip reasons for dynamic `@props`, spread attributes, or unresolved anonymous component roots.
 
-- [ ] Task 5: Surface Blade prop/slot completions and navigation.
+- [x] Task 5: Surface Blade prop/slot completions and navigation.
 
   Deliverable: add completions and definitions for `<x-... />` props, `:bound` attributes when the prop name is static, `@props`, named slots, and component references that should jump between Blade usage, component class, and backing view.
 
@@ -103,7 +103,7 @@ Prioritize the next work in this order:
 
   Logging requirements: log component metadata hits with component name, prop/slot kind, and source target; log DEBUG-only reasons for unsupported inline PHP expressions.
 
-- [ ] Task 6: Deepen Livewire workflows beyond component names.
+- [x] Task 6: Deepen Livewire workflows beyond component names.
 
   Deliverable: index Livewire public properties, action methods, and simple event names; add completions/definitions between `@livewire(...)`, `<livewire:...>`, `wire:model`, `wire:click`, and component class members where the mapping is static and trustworthy.
 
@@ -112,7 +112,7 @@ Prioritize the next work in this order:
   Logging requirements: log per-component member counts and DEBUG miss reasons such as `dynamic-wire-expression`, `trait-only-member`, and `non-public-livewire-member`.
 
 ### Phase 3: Inertia And Filament Deep Workflows
-- [ ] Task 7: Add prop-aware Inertia navigation and completion.
+- [x] Task 7: Add prop-aware Inertia navigation and completion.
 
   Deliverable: index `Inertia::render(...)` payload keys, shared props where they are statically visible, and page component names from common Laravel + Vue/React layouts. Surface completions and definitions for page names and known prop keys in the most reliable contexts first.
 
@@ -120,7 +120,7 @@ Prioritize the next work in this order:
 
   Logging requirements: log matched render targets, prop-key counts, and DEBUG skip reasons such as `spread-props`, `dynamic-page-name`, and `unknown-shared-props`.
 
-- [ ] Task 8: Deepen Filament resource intelligence.
+- [x] Task 8: Deepen Filament resource intelligence.
 
   Deliverable: move beyond resource registration to index resource pages, relation managers, form fields, table columns, and simple action names, then expose conservative completions/definitions for common Filament references in providers and resource classes.
 
@@ -129,7 +129,7 @@ Prioritize the next work in this order:
   Logging requirements: log indexed resource sub-surface counts and DEBUG skip reasons for fluent/dynamic schemas that cannot be statically mapped.
 
 ### Phase 4: Eloquent Diagnostics And Release Hardening
-- [ ] Task 9: Add richer Eloquent metadata diagnostics.
+- [x] Task 9: Add richer Eloquent metadata diagnostics.
 
   Deliverable: extend migration/cast metadata with nullable/default/enum/json signals, then add diagnostics for suspicious `$casts`, unknown `$fillable` / `$guarded` / `$casts` keys, and obvious mismatches between known columns and model metadata when the table resolution is confident.
 
@@ -137,7 +137,7 @@ Prioritize the next work in this order:
 
   Logging requirements: log diagnostic counts by type at INFO and individual mismatch reasons at DEBUG; avoid WARN unless the index itself becomes inconsistent.
 
-- [ ] Task 10: Run verification, update release docs, and package a fresh VSIX.
+- [x] Task 10: Run verification, update release docs, and package a fresh VSIX.
 
   Deliverable: run Node 20 verification, keep README/CHANGELOG/roadmap aligned with shipped behavior, and build a fresh VSIX after the feature batch lands.
 

@@ -14,6 +14,15 @@ export type BoundImplementationDefinitionContext =
       reason: "no-word" | "unsupported-expression" | "no-typed-receiver";
     };
 
+export interface PhpTypedMemberReferenceContext {
+  receiver: string;
+  prefix: string;
+  member: string;
+  abstractClass: string;
+  rangeStart: number;
+  rangeEnd: number;
+}
+
 export function resolveBoundImplementationDefinitionContext(
   text: string,
   offset: number,
@@ -73,6 +82,53 @@ export function resolveBoundImplementationDefinitionContext(
   }
 
   return { kind: "none", reason: "unsupported-expression" };
+}
+
+export function resolvePhpTypedMemberReferenceContext(
+  text: string,
+  offset: number,
+): PhpTypedMemberReferenceContext | undefined {
+  const boundedOffset = Math.max(0, Math.min(offset, text.length));
+  const prefix = text.slice(0, boundedOffset);
+  const thisPropertyCall = /\$this\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(prefix);
+  if (thisPropertyCall?.[1]) {
+    const abstractClass = findThisPropertyType(text, thisPropertyCall[1], boundedOffset);
+    if (!abstractClass) {
+      return undefined;
+    }
+
+    const member = thisPropertyCall[2] ?? "";
+    const suffixLength = memberSuffixLength(text, boundedOffset);
+    return {
+      receiver: `$this->${thisPropertyCall[1]}`,
+      prefix: member,
+      member: member + text.slice(boundedOffset, boundedOffset + suffixLength),
+      abstractClass,
+      rangeStart: boundedOffset - member.length,
+      rangeEnd: boundedOffset + suffixLength,
+    };
+  }
+
+  const variableCall = /(?<!>)\$([A-Za-z_][A-Za-z0-9_]*)\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(prefix);
+  if (!variableCall?.[1]) {
+    return undefined;
+  }
+
+  const abstractClass = findVariableType(text, variableCall[1], boundedOffset);
+  if (!abstractClass) {
+    return undefined;
+  }
+
+  const member = variableCall[2] ?? "";
+  const suffixLength = memberSuffixLength(text, boundedOffset);
+  return {
+    receiver: `$${variableCall[1]}`,
+    prefix: member,
+    member: member + text.slice(boundedOffset, boundedOffset + suffixLength),
+    abstractClass,
+    rangeStart: boundedOffset - member.length,
+    rangeEnd: boundedOffset + suffixLength,
+  };
 }
 
 function directMakeCallAtPrefix(prefix: string): { abstractClass: string; method: string } | undefined {
@@ -240,6 +296,14 @@ function wordRangeAtOffset(text: string, offset: number): { start: number; end: 
   }
 
   return { start, end };
+}
+
+function memberSuffixLength(text: string, offset: number): number {
+  let end = offset;
+  while (end < text.length && /[A-Za-z0-9_]/.test(text[end] ?? "")) {
+    end += 1;
+  }
+  return end - offset;
 }
 
 function escapeRegex(value: string): string {

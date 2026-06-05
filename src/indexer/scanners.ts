@@ -18,9 +18,22 @@ export interface EloquentIndex {
 
 export interface EcosystemIndex {
   livewireComponents: IndexedItem[];
+  livewireProperties: IndexedItem[];
+  livewireActions: IndexedItem[];
+  livewireEvents: IndexedItem[];
   inertiaPages: IndexedItem[];
+  inertiaProps: IndexedItem[];
   filamentResources: IndexedItem[];
+  filamentPages: IndexedItem[];
+  filamentFields: IndexedItem[];
+  filamentActions: IndexedItem[];
   novaResources: IndexedItem[];
+}
+
+export interface BladeComponentIndex {
+  components: IndexedItem[];
+  props: IndexedItem[];
+  slots: IndexedItem[];
 }
 
 export interface ContainerBindingIndex {
@@ -31,11 +44,30 @@ export interface ContainerBindingIndex {
 interface ResponseFieldMatch {
   path: string[];
   index: number;
+  source?: SourceLocation;
+  responseSourceKind?: string;
+  responseSourceClass?: string;
 }
 
 interface ResponseFieldScanContext {
   modelVariables: Map<string, string>;
   fieldsByModel: Map<string, IndexedItem[]>;
+  namespace?: string;
+  uses?: Map<string, string>;
+  sourceFile?: string;
+  resourceFieldResolver?: (className: string) => ResponseFieldMatch[] | undefined;
+}
+
+interface RawResponseResourceDefinition {
+  className: string;
+  file: string;
+  text: string;
+  namespace: string;
+  uses: Map<string, string>;
+  kind: "json-resource" | "resource-collection" | "anonymous-resource-collection";
+  toArrayBody?: string;
+  toArrayBodyOffset?: number;
+  collectsResourceClass?: string;
 }
 
 interface PhpClassInfo {
@@ -321,8 +353,25 @@ export async function scanResponseFields(
 ): Promise<IndexedItem[]> {
   const fieldsByModel = responseFieldsByModel(eloquentFields);
   const modelClasses = new Set(eloquentModels.map((item) => item.modelClass ?? item.key));
-  const routeFields = await scanRouteClosureResponseFields(projectRoot, logger, httpRoutes, routeControllerScopes, fieldsByModel, modelClasses);
-  const controllerFields = await scanControllerResponseFields(projectRoot, logger, httpRoutes, controllerMethods, fieldsByModel, modelClasses);
+  const resourceFieldResolver = await scanResponseResources(projectRoot, logger, fieldsByModel, modelClasses);
+  const routeFields = await scanRouteClosureResponseFields(
+    projectRoot,
+    logger,
+    httpRoutes,
+    routeControllerScopes,
+    fieldsByModel,
+    modelClasses,
+    resourceFieldResolver,
+  );
+  const controllerFields = await scanControllerResponseFields(
+    projectRoot,
+    logger,
+    httpRoutes,
+    controllerMethods,
+    fieldsByModel,
+    modelClasses,
+    resourceFieldResolver,
+  );
   const items = uniqueItems([...routeFields, ...controllerFields]);
 
   logger.debug("[LaravelIndex.scanResponseFields] completed", {
@@ -341,6 +390,7 @@ async function scanRouteClosureResponseFields(
   routeControllerScopes: RouteControllerScope[],
   fieldsByModel: Map<string, IndexedItem[]>,
   modelClasses: Set<string>,
+  resourceFieldResolver: (className: string) => ResponseFieldMatch[] | undefined,
 ): Promise<IndexedItem[]> {
   const routesRoot = path.join(projectRoot, "routes");
   const routeFiles = await walkFiles(routesRoot, (file) => file.endsWith(".php"));
@@ -365,6 +415,10 @@ async function scanRouteClosureResponseFields(
       const fields = scanResponseFieldsFromStatement(text, statement, route.uriIndex, {
         fieldsByModel,
         modelVariables: modelVariablesFromRouteClosure(statement, uses, modelClasses),
+        namespace: "",
+        uses,
+        sourceFile: file,
+        resourceFieldResolver,
       });
       if (fields.length === 0) {
         skippedDynamic += 1;
@@ -398,6 +452,7 @@ async function scanControllerResponseFields(
   controllerMethods: IndexedItem[],
   fieldsByModel: Map<string, IndexedItem[]>,
   modelClasses: Set<string>,
+  resourceFieldResolver: (className: string) => ResponseFieldMatch[] | undefined,
 ): Promise<IndexedItem[]> {
   const controllersRoot = path.join(projectRoot, "app", "Http", "Controllers");
   const controllerFiles = await walkFiles(controllersRoot, (file) => file.endsWith(".php"));
@@ -432,6 +487,10 @@ async function scanControllerResponseFields(
       const fields = scanResponseFieldsFromStatement(text, methodBody.body, methodBody.bodyOffset, {
         fieldsByModel,
         modelVariables: modelVariablesFromParams(methodBody.params, namespace, uses, modelClasses),
+        namespace,
+        uses,
+        sourceFile: file,
+        resourceFieldResolver,
       });
       if (fields.length === 0) {
         skippedDynamic += 1;
@@ -452,6 +511,110 @@ async function scanControllerResponseFields(
   });
 
   return items;
+}
+
+async function scanResponseResources(
+  projectRoot: string,
+  logger: Logger,
+  fieldsByModel: Map<string, IndexedItem[]>,
+  modelClasses: Set<string>,
+): Promise<(className: string) => ResponseFieldMatch[] | undefined> {
+  const resourcesRoot = path.join(projectRoot, "app", "Http", "Resources");
+  const resourceFiles = await walkFiles(resourcesRoot, (file) => file.endsWith(".php"));
+  const resourceDefinitions = new Map<string, RawResponseResourceDefinition>();
+  let resourceClasses = 0;
+  let resourceToArrayMethods = 0;
+
+  for (const file of resourceFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+
+    const classInfo = scanPhpClassInfo(file, text);
+    if (!classInfo?.extendsClass) {
+      continue;
+    }
+
+    const resourceKind = responseResourceKind(classInfo.extendsClass);
+    if (!resourceKind) {
+      continue;
+    }
+
+    resourceClasses += 1;
+    const toArrayMethod = scanControllerMethodBodies(text).find((method) => method.method === "toArray");
+    if (toArrayMethod) {
+      resourceToArrayMethods += 1;
+    }
+
+    resourceDefinitions.set(classInfo.fqn, {
+      className: classInfo.fqn,
+      file,
+      text,
+      namespace: classInfo.namespace,
+      uses: classInfo.uses,
+      kind: resourceKind,
+      toArrayBody: toArrayMethod?.body,
+      toArrayBodyOffset: toArrayMethod?.bodyOffset,
+      collectsResourceClass: scanCollectedResourceClass(text, classInfo.namespace, classInfo.uses),
+    });
+  }
+
+  const resolvedFields = new Map<string, ResponseFieldMatch[]>();
+  const building = new Set<string>();
+
+  const resolveResourceFields = (className: string): ResponseFieldMatch[] | undefined => {
+    const normalizedClass = normalizeClassReference(className);
+    if (resolvedFields.has(normalizedClass)) {
+      return resolvedFields.get(normalizedClass);
+    }
+
+    const definition = resourceDefinitions.get(normalizedClass);
+    if (!definition) {
+      return undefined;
+    }
+    if (building.has(normalizedClass)) {
+      logger.debug("[LaravelIndex.scanResponseResources] circular resource reference", {
+        className: normalizedClass,
+      });
+      return [];
+    }
+
+    building.add(normalizedClass);
+    let fields: ResponseFieldMatch[] = [];
+
+    if (definition.toArrayBody && definition.toArrayBodyOffset !== undefined) {
+      fields = scanResponseFieldsFromStatement(definition.text, definition.toArrayBody, definition.toArrayBodyOffset, {
+        fieldsByModel,
+        modelVariables: modelVariablesFromParams("", definition.namespace, definition.uses, modelClasses),
+        namespace: definition.namespace,
+        uses: definition.uses,
+        sourceFile: definition.file,
+        resourceFieldResolver: resolveResourceFields,
+      }).map((field) => ({
+        ...field,
+        responseSourceKind: field.responseSourceKind ?? definition.kind,
+        responseSourceClass: field.responseSourceClass ?? definition.className,
+      }));
+    } else if (definition.kind !== "json-resource") {
+      logger.debug("[LaravelIndex.scanResponseResources] unsupported collection shape", {
+        className: definition.className,
+        kind: definition.kind,
+      });
+    }
+
+    resolvedFields.set(normalizedClass, uniqueResponseFields(fields));
+    building.delete(normalizedClass);
+    return resolvedFields.get(normalizedClass);
+  };
+
+  logger.debug("[LaravelIndex.scanResponseResources] discovered resources", {
+    files: resourceFiles.length,
+    resourceClasses,
+    resourceToArrayMethods,
+  });
+
+  return resolveResourceFields;
 }
 
 export async function scanViews(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
@@ -532,6 +695,9 @@ export async function scanDatabaseSchema(projectRoot: string, logger: Logger): P
           detail: `${table.name} column (${column.type})`,
           table: table.name,
           columnType: column.type,
+          nullable: column.nullable,
+          defaultValue: column.defaultValue,
+          enumValues: column.enumValues,
         });
       }
     }
@@ -610,7 +776,9 @@ export async function scanEloquentModels(
       fields.push({
         ...column,
         kind: "eloquent-field",
-        detail: column.columnType ? `${modelClass} field (${table}, ${column.columnType})` : `${modelClass} field (${table})`,
+        detail: column.columnType
+          ? `${modelClass} field (${table}, ${column.columnType}${column.nullable ? ", nullable" : ""})`
+          : `${modelClass} field (${table})`,
         modelClass,
         table,
       });
@@ -813,17 +981,25 @@ export async function scanEnvKeys(projectRoot: string, logger: Logger): Promise<
   return uniqueItems(items);
 }
 
-export async function scanBladeComponents(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+export async function scanBladeComponents(projectRoot: string, logger: Logger): Promise<BladeComponentIndex> {
   const viewComponentsRoot = path.join(projectRoot, "resources", "views", "components");
   const classComponentsRoot = path.join(projectRoot, "app", "View", "Components");
   const viewFiles = await walkFiles(viewComponentsRoot, (file) => file.endsWith(".blade.php"));
   const classFiles = await walkFiles(classComponentsRoot, (file) => file.endsWith(".php"));
-  const items: IndexedItem[] = [];
+  const components: IndexedItem[] = [];
+  const props: IndexedItem[] = [];
+  const slots: IndexedItem[] = [];
 
   for (const file of viewFiles) {
     const relative = toPosixPath(path.relative(viewComponentsRoot, file));
     const key = relative.replace(/\.blade\.php$/, "").replace(/\//g, ".");
-    items.push(createItemFromLine("blade-component", key, file, 0, 0, `<x-${key.replace(/\./g, "-")}>`));
+    const text = await readTextFile(file);
+    components.push(createItemFromLine("blade-component", key, file, 0, 0, `<x-${key.replace(/\./g, "-")}>`));
+    if (text) {
+      const viewProps = scanBladeAnonymousProps(text, file, key);
+      props.push(...viewProps);
+      slots.push(...scanBladeSlotVariables(text, file, key, new Set(viewProps.map((item) => item.key))));
+    }
   }
 
   for (const file of classFiles) {
@@ -833,81 +1009,315 @@ export async function scanBladeComponents(projectRoot: string, logger: Logger): 
       .replace(/\//g, ".")
       .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
       .toLowerCase();
-    items.push(createItemFromLine("blade-component", key, file, 0, 0, `<x-${key.replace(/\./g, "-")}>`));
+    const text = await readTextFile(file);
+    components.push(createItemFromLine("blade-component", key, file, 0, 0, `<x-${key.replace(/\./g, "-")}>`));
+    if (text) {
+      props.push(...scanBladeClassProps(text, file, key));
+    }
   }
 
   logger.debug("[LaravelIndex.scanBladeComponents] completed", {
     viewFiles: viewFiles.length,
     classFiles: classFiles.length,
-    items: items.length,
+    components: components.length,
+    props: props.length,
+    slots: slots.length,
   });
-  return uniqueItems(items);
+  return {
+    components: uniqueItems(components),
+    props: uniqueItems(props),
+    slots: uniqueItems(slots),
+  };
 }
 
 export async function scanEcosystemItems(projectRoot: string, logger: Logger): Promise<EcosystemIndex> {
-  const livewireComponents = await scanLivewireComponents(projectRoot, logger);
-  const inertiaPages = await scanInertiaPages(projectRoot, logger);
-  const filamentResources = await scanFilamentResources(projectRoot, logger);
+  const livewireIndex = await scanLivewireComponents(projectRoot, logger);
+  const inertiaIndex = await scanInertiaPages(projectRoot, logger);
+  const filamentIndex = await scanFilamentResources(projectRoot, logger);
   const novaResources = await scanNovaResources(projectRoot, logger);
 
   logger.debug("[LaravelIndex.scanEcosystemItems] completed", {
-    livewireComponents: livewireComponents.length,
-    inertiaPages: inertiaPages.length,
-    filamentResources: filamentResources.length,
+    livewireComponents: livewireIndex.components.length,
+    livewireProperties: livewireIndex.properties.length,
+    livewireActions: livewireIndex.actions.length,
+    livewireEvents: livewireIndex.events.length,
+    inertiaPages: inertiaIndex.pages.length,
+    inertiaProps: inertiaIndex.props.length,
+    filamentResources: filamentIndex.resources.length,
+    filamentPages: filamentIndex.pages.length,
+    filamentFields: filamentIndex.fields.length,
+    filamentActions: filamentIndex.actions.length,
     novaResources: novaResources.length,
   });
 
   return {
-    livewireComponents,
-    inertiaPages,
-    filamentResources,
+    livewireComponents: livewireIndex.components,
+    livewireProperties: livewireIndex.properties,
+    livewireActions: livewireIndex.actions,
+    livewireEvents: livewireIndex.events,
+    inertiaPages: inertiaIndex.pages,
+    inertiaProps: inertiaIndex.props,
+    filamentResources: filamentIndex.resources,
+    filamentPages: filamentIndex.pages,
+    filamentFields: filamentIndex.fields,
+    filamentActions: filamentIndex.actions,
     novaResources,
   };
 }
 
-async function scanLivewireComponents(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+async function scanLivewireComponents(
+  projectRoot: string,
+  logger: Logger,
+): Promise<{ components: IndexedItem[]; properties: IndexedItem[]; actions: IndexedItem[]; events: IndexedItem[] }> {
   const roots = [path.join(projectRoot, "app", "Livewire"), path.join(projectRoot, "app", "Http", "Livewire")];
   const viewRoot = path.join(projectRoot, "resources", "views", "livewire");
-  const items: IndexedItem[] = [];
+  const components: IndexedItem[] = [];
+  const properties: IndexedItem[] = [];
+  const actions: IndexedItem[] = [];
+  const events: IndexedItem[] = [];
 
   for (const root of roots) {
     const files = await walkFiles(root, (file) => file.endsWith(".php"));
     for (const file of files) {
+      const text = await readTextFile(file);
       const relative = toPosixPath(path.relative(root, file)).replace(/\.php$/, "");
       const key = relative
         .split("/")
         .map((segment) => segment.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase())
         .join(".");
-      items.push(createItemFromLine("livewire-component", key, file, 0, 0, "Livewire component"));
+      components.push(createItemFromLine("livewire-component", key, file, 0, 0, "Livewire component"));
+      if (text) {
+        properties.push(...scanLivewireProperties(text, file, key));
+        actions.push(...scanLivewireActions(text, file, key));
+        events.push(...scanLivewireEvents(text, file, key));
+      }
     }
   }
 
   const viewFiles = await walkFiles(viewRoot, (file) => file.endsWith(".blade.php"));
   for (const file of viewFiles) {
     const key = toPosixPath(path.relative(viewRoot, file)).replace(/\.blade\.php$/, "").replace(/\//g, ".");
-    items.push(createItemFromLine("livewire-component", key, file, 0, 0, "Livewire view component"));
+    components.push(createItemFromLine("livewire-component", key, file, 0, 0, "Livewire view component"));
   }
 
-  logger.debug("[LaravelIndex.scanLivewireComponents] completed", { viewFiles: viewFiles.length, items: items.length });
-  return uniqueItems(items);
+  logger.debug("[LaravelIndex.scanLivewireComponents] completed", {
+    viewFiles: viewFiles.length,
+    components: components.length,
+    properties: properties.length,
+    actions: actions.length,
+    events: events.length,
+  });
+  return {
+    components: uniqueItems(components),
+    properties: uniqueItems(properties),
+    actions: uniqueItems(actions),
+    events: uniqueItems(events),
+  };
 }
 
-async function scanInertiaPages(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+async function scanInertiaPages(projectRoot: string, logger: Logger): Promise<{ pages: IndexedItem[]; props: IndexedItem[] }> {
   const pagesRoot = path.join(projectRoot, "resources", "js", "Pages");
   const pageFiles = await walkFiles(pagesRoot, (file) => /\.(vue|jsx|tsx|svelte)$/.test(file));
-  const items = pageFiles.map((file) => {
+  const pages = pageFiles.map((file) => {
     const relative = toPosixPath(path.relative(pagesRoot, file)).replace(/\.(vue|jsx|tsx|svelte)$/, "");
     return createItemFromLine("inertia-page", relative, file, 0, 0, "Inertia page");
   });
 
-  logger.debug("[LaravelIndex.scanInertiaPages] completed", { files: pageFiles.length, items: items.length });
-  return uniqueItems(items);
+  const props: IndexedItem[] = [];
+  const phpFiles = [
+    ...(await walkFiles(path.join(projectRoot, "routes"), (file) => file.endsWith(".php"))),
+    ...(await walkFiles(path.join(projectRoot, "app", "Http", "Controllers"), (file) => file.endsWith(".php"))),
+  ];
+
+  for (const file of phpFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+
+    for (const match of text.matchAll(/\b(?:Inertia::render|inertia)\(\s*['"]([^'"]+)['"]\s*,\s*\[/g)) {
+      if (!match[1] || match.index === undefined) {
+        continue;
+      }
+      const openBracket = text.indexOf("[", match.index);
+      const closeBracket = openBracket >= 0 ? findMatchingSquareBracket(text, openBracket, text.length) : -1;
+      if (openBracket < 0 || closeBracket < 0) {
+        continue;
+      }
+
+      for (const field of scanPhpArrayLiteralKeyPaths(text, openBracket, closeBracket, [])) {
+        const key = field.path.join(".");
+        props.push({
+          ...createItem("inertia-prop", key, file, text, field.index),
+          detail: `Inertia prop ${match[1]}`,
+          componentName: match[1],
+          responseFieldPath: field.path,
+        });
+      }
+    }
+  }
+
+  logger.debug("[LaravelIndex.scanInertiaPages] completed", {
+    files: pageFiles.length,
+    pages: pages.length,
+    props: props.length,
+  });
+  return {
+    pages: uniqueItems(pages),
+    props: uniqueItems(props),
+  };
 }
 
-async function scanFilamentResources(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
+function scanBladeClassProps(text: string, file: string, componentName: string): IndexedItem[] {
+  const items: IndexedItem[] = [];
+  const constructorMatch = /\bfunction\s+__construct\s*\(([\s\S]*?)\)/.exec(text);
+  if (constructorMatch?.[1]) {
+    for (const match of constructorMatch[1].matchAll(/\$([A-Za-z_][A-Za-z0-9_]*)/g)) {
+      if (!match[1] || match.index === undefined) {
+        continue;
+      }
+      items.push({
+        ...createItem("blade-component-prop", match[1], file, text, constructorMatch.index + constructorMatch[0].indexOf(match[0])),
+        detail: `Blade component prop <x-${componentName.replace(/\./g, "-")}>`,
+        componentName,
+      });
+    }
+  }
+
+  for (const match of text.matchAll(/\bpublic\s+(?!function\b)[^$]*\$([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    if (!match[1] || match.index === undefined) {
+      continue;
+    }
+    items.push({
+      ...createItem("blade-component-prop", match[1], file, text, match.index + match[0].indexOf(match[1])),
+      detail: `Blade component prop <x-${componentName.replace(/\./g, "-")}>`,
+      componentName,
+    });
+  }
+
+  return items;
+}
+
+function scanBladeAnonymousProps(text: string, file: string, componentName: string): IndexedItem[] {
+  const items: IndexedItem[] = [];
+  const seen = new Set<string>();
+
+  for (const match of text.matchAll(/@props\s*\(\s*\[([\s\S]*?)\]\s*\)/g)) {
+    if (!match[1] || match.index === undefined) {
+      continue;
+    }
+
+    const block = match[1];
+    for (const keyMatch of block.matchAll(/['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*(?:=>|,|$)/g)) {
+      if (!keyMatch[1] || seen.has(keyMatch[1])) {
+        continue;
+      }
+      seen.add(keyMatch[1]);
+      items.push({
+        ...createItem("blade-component-prop", keyMatch[1], file, text, match.index + match[0].indexOf(keyMatch[1])),
+        detail: `Blade component prop <x-${componentName.replace(/\./g, "-")}>`,
+        componentName,
+      });
+    }
+  }
+
+  return items;
+}
+
+function scanBladeSlotVariables(text: string, file: string, componentName: string, propNames: Set<string>): IndexedItem[] {
+  const excluded = new Set(["attributes", "component", "errors", "loop", "slot", ...propNames]);
+  const items: IndexedItem[] = [];
+
+  for (const match of text.matchAll(/\$([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    if (!match[1] || match.index === undefined || excluded.has(match[1])) {
+      continue;
+    }
+    items.push({
+      ...createItem("blade-component-slot", match[1], file, text, match.index + match[0].indexOf(match[1])),
+      detail: `Blade component slot <x-slot:${match[1]}>`,
+      componentName,
+    });
+  }
+
+  return items;
+}
+
+function scanLivewireProperties(text: string, file: string, componentName: string): IndexedItem[] {
+  const items: IndexedItem[] = [];
+  for (const match of text.matchAll(/\bpublic\s+(?!function\b)[^$]*\$([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    if (!match[1] || match.index === undefined) {
+      continue;
+    }
+    items.push({
+      ...createItem("livewire-property", match[1], file, text, match.index + match[0].indexOf(match[1])),
+      detail: `Livewire property ${componentName}`,
+      componentName,
+    });
+  }
+  return items;
+}
+
+function scanLivewireActions(text: string, file: string, componentName: string): IndexedItem[] {
+  const lifecyclePrefixes = ["boot", "hydrate", "dehydrate", "mount", "render", "updating", "updated"];
+  return scanPublicPhpMethods(text)
+    .filter((method) => !lifecyclePrefixes.some((prefix) => method.name === prefix || method.name.startsWith(prefix)))
+    .map((method) => ({
+      ...createItem("livewire-action", method.name, file, text, method.index),
+      detail: `Livewire action ${componentName}`,
+      componentName,
+      method: method.name,
+    }));
+}
+
+function scanLivewireEvents(text: string, file: string, componentName: string): IndexedItem[] {
+  const items: IndexedItem[] = [];
+  const eventRegex = /(?:->dispatch|->emit|dispatchBrowserEvent)\(\s*['"]([A-Za-z0-9_.:-]+)['"]/g;
+  for (const match of text.matchAll(eventRegex)) {
+    if (!match[1] || match.index === undefined) {
+      continue;
+    }
+    items.push({
+      ...createItem("livewire-event", match[1], file, text, match.index + match[0].indexOf(match[1])),
+      detail: `Livewire event ${componentName}`,
+      componentName,
+    });
+  }
+  return items;
+}
+
+function scanFilamentNamedElements(
+  text: string,
+  file: string,
+  kind: "field" | "action",
+): IndexedItem[] {
+  const items: IndexedItem[] = [];
+  const fieldRegex = /\b(?:TextInput|Textarea|Toggle|Checkbox|Select|DatePicker|TextColumn|IconColumn|BadgeColumn|ViewColumn)::make\(\s*['"]([^'"]+)['"]/g;
+  const actionRegex = /\b(?:Action|BulkAction)::make\(\s*['"]([^'"]+)['"]/g;
+  const regex = kind === "field" ? fieldRegex : actionRegex;
+
+  for (const match of text.matchAll(regex)) {
+    if (!match[1] || match.index === undefined) {
+      continue;
+    }
+    items.push({
+      ...createItem(kind === "field" ? "filament-field" : "filament-action", match[1], file, text, match.index + match[0].indexOf(match[1])),
+      detail: kind === "field" ? "Filament field" : "Filament action",
+    });
+  }
+
+  return items;
+}
+
+async function scanFilamentResources(
+  projectRoot: string,
+  logger: Logger,
+): Promise<{ resources: IndexedItem[]; pages: IndexedItem[]; fields: IndexedItem[]; actions: IndexedItem[] }> {
   const resourcesRoot = path.join(projectRoot, "app", "Filament", "Resources");
   const resourceFiles = await walkFiles(resourcesRoot, (file) => file.endsWith("Resource.php"));
-  const items: IndexedItem[] = [];
+  const resources: IndexedItem[] = [];
+  const pages: IndexedItem[] = [];
+  const fields: IndexedItem[] = [];
+  const actions: IndexedItem[] = [];
 
   for (const file of resourceFiles) {
     const text = await readTextFile(file);
@@ -922,15 +1332,48 @@ async function scanFilamentResources(projectRoot: string, logger: Logger): Promi
     }
 
     const resourceClass = `${namespace}\\${classMatch[1]}`;
-    items.push({
+    resources.push({
       ...createItem("filament-resource", resourceClass, file, text, classMatch.index),
       label: classMatch[1],
       detail: "Filament resource",
     });
+    fields.push(...scanFilamentNamedElements(text, file, "field"));
+    actions.push(...scanFilamentNamedElements(text, file, "action"));
   }
 
-  logger.debug("[LaravelIndex.scanFilamentResources] completed", { files: resourceFiles.length, items: items.length });
-  return uniqueItems(items);
+  const pageFiles = await walkFiles(resourcesRoot, (file) => /[/\\]Pages[/\\].+\.php$/.test(file));
+  for (const file of pageFiles) {
+    const text = await readTextFile(file);
+    if (!text) {
+      continue;
+    }
+    const classInfo = scanPhpClassInfo(file, text);
+    if (!classInfo) {
+      continue;
+    }
+
+    pages.push({
+      ...createItem("filament-page", classInfo.fqn, file, text, classInfo.classNameIndex),
+      label: classInfo.className,
+      detail: "Filament page",
+    });
+    fields.push(...scanFilamentNamedElements(text, file, "field"));
+    actions.push(...scanFilamentNamedElements(text, file, "action"));
+  }
+
+  logger.debug("[LaravelIndex.scanFilamentResources] completed", {
+    files: resourceFiles.length,
+    resources: resources.length,
+    pages: pages.length,
+    fields: fields.length,
+    actions: actions.length,
+  });
+  return {
+    resources: uniqueItems(resources),
+    pages: uniqueItems(pages),
+    fields: uniqueItems(fields),
+    actions: uniqueItems(actions),
+  };
 }
 
 async function scanNovaResources(projectRoot: string, logger: Logger): Promise<IndexedItem[]> {
@@ -1293,6 +1736,8 @@ function scanResponseFieldsFromStatement(
     }
   }
 
+  fields.push(...scanTopLevelResourceResponseFields(fileText, statement, statementOffset, context));
+
   return uniqueResponseFields(fields);
 }
 
@@ -1327,6 +1772,7 @@ function scanPhpArrayLiteralKeyPaths(
     }
 
     fields.push(...responseModelFieldMatches(text, valueStart, closeBracket, pathParts, key.index, context));
+    fields.push(...responseNestedResourceMatches(text, valueStart, closeBracket, pathParts, key.index, context));
     index = key.valueStart + 1;
   }
 
@@ -1366,7 +1812,130 @@ function responseModelFieldMatches(
   return fields.map((field) => ({
     path: [...parentPath, field.key],
     index: field.source.offset ?? fallbackIndex,
+    source: field.source,
+    responseSourceKind: "eloquent-model",
+    responseSourceClass: modelClass,
   }));
+}
+
+function responseResourceMatchAt(
+  text: string,
+  valueStart: number,
+  end: number,
+  context?: ResponseFieldScanContext,
+): { className: string; responseSourceKind: string } | undefined {
+  if (!context?.resourceFieldResolver) {
+    return undefined;
+  }
+
+  const slice = text.slice(valueStart, end);
+  const directNew = /^\s*new\s+\\?([A-Za-z_][A-Za-z0-9_\\]*)\s*\(/.exec(slice)?.[1];
+  const directMake = /^\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::make\s*\(/.exec(slice)?.[1];
+  const directCollection = /^\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::collection\s*\(/.exec(slice)?.[1];
+  const bareNew = /^\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)\s*\(/.exec(slice)?.[1];
+  const classReference = directNew ?? directMake ?? directCollection ?? bareNew;
+  if (!classReference) {
+    return undefined;
+  }
+
+  const className = resolvePhpClassReference(classReference, context.namespace ?? "", context.uses ?? new Map());
+  const resourceFields = context.resourceFieldResolver(className);
+  if (!resourceFields || resourceFields.length === 0) {
+    return undefined;
+  }
+
+  return {
+    className,
+    responseSourceKind: directCollection ? "anonymous-resource-collection" : "json-resource",
+  };
+}
+
+function responseNestedResourceMatches(
+  text: string,
+  valueStart: number,
+  end: number,
+  parentPath: string[],
+  fallbackIndex: number,
+  context?: ResponseFieldScanContext,
+): ResponseFieldMatch[] {
+  const resourceMatch = responseResourceMatchAt(text, valueStart, end, context);
+  if (!resourceMatch) {
+    return [];
+  }
+
+  const fields = context?.resourceFieldResolver?.(resourceMatch.className) ?? [];
+  return fields.map((field) => ({
+    ...field,
+    path: [...parentPath, ...(field.path ?? [])],
+    index: field.source?.offset ?? field.index ?? fallbackIndex,
+    responseSourceKind: field.responseSourceKind ?? resourceMatch.responseSourceKind,
+    responseSourceClass: field.responseSourceClass ?? resourceMatch.className,
+  }));
+}
+
+function scanTopLevelResourceResponseFields(
+  fileText: string,
+  statement: string,
+  statementOffset: number,
+  context?: ResponseFieldScanContext,
+): ResponseFieldMatch[] {
+  const fields: ResponseFieldMatch[] = [];
+  const topLevelPatterns = [
+    /\bfn\s*\([^)]*\)\s*=>\s*new\s+\\?([A-Za-z_][A-Za-z0-9_\\]*)\s*\(/g,
+    /\bfn\s*\([^)]*\)\s*=>\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::make\s*\(/g,
+    /\bfn\s*\([^)]*\)\s*=>\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::collection\s*\(/g,
+    /\breturn\s+new\s+\\?([A-Za-z_][A-Za-z0-9_\\]*)\s*\(/g,
+    /\breturn\s+\\?([A-Za-z_][A-Za-z0-9_\\]*)::make\s*\(/g,
+    /\breturn\s+\\?([A-Za-z_][A-Za-z0-9_\\]*)::collection\s*\(/g,
+    /response\(\)->json\(\s*new\s+\\?([A-Za-z_][A-Za-z0-9_\\]*)\s*\(/g,
+    /response\(\)->json\(\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::make\s*\(/g,
+    /response\(\)->json\(\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::collection\s*\(/g,
+  ];
+
+  for (const pattern of topLevelPatterns) {
+    for (const match of statement.matchAll(pattern)) {
+      if (!match[1] || match.index === undefined) {
+        continue;
+      }
+
+      const valueStart = statementOffset + match.index + match[0].lastIndexOf(match[1]);
+      const resourceMatch = responseResourceMatchAt(fileText, valueStart, fileText.length, context);
+      if (!resourceMatch) {
+        continue;
+      }
+
+      const resourceFields = context?.resourceFieldResolver?.(resourceMatch.className) ?? [];
+      fields.push(
+        ...resourceFields.map((field) => ({
+          ...field,
+          responseSourceKind: field.responseSourceKind ?? resourceMatch.responseSourceKind,
+          responseSourceClass: field.responseSourceClass ?? resourceMatch.className,
+        })),
+      );
+    }
+  }
+
+  return fields;
+}
+
+function responseResourceKind(
+  extendsClass: string,
+): RawResponseResourceDefinition["kind"] | undefined {
+  if (extendsClass === "Illuminate\\Http\\Resources\\Json\\JsonResource") {
+    return "json-resource";
+  }
+  if (extendsClass === "Illuminate\\Http\\Resources\\Json\\ResourceCollection") {
+    return "resource-collection";
+  }
+  if (extendsClass === "Illuminate\\Http\\Resources\\Json\\AnonymousResourceCollection") {
+    return "anonymous-resource-collection";
+  }
+  return undefined;
+}
+
+function scanCollectedResourceClass(text: string, namespace: string, uses: Map<string, string>): string | undefined {
+  const classReference = /\$(?:collects)\s*=\s*\\?([A-Za-z_][A-Za-z0-9_\\]*)::class\s*;/.exec(text)?.[1];
+  return classReference ? resolvePhpClassReference(classReference, namespace, uses) : undefined;
 }
 
 function phpVariableAt(text: string, index: number, end: number): string | undefined {
@@ -1527,11 +2096,14 @@ function scanMigrationTableBlocks(text: string): Array<{ name: string; index: nu
   return tables;
 }
 
-function scanMigrationColumns(body: string, bodyOffset: number): Array<{ name: string; index: number; type: string }> {
-  const columns: Array<{ name: string; index: number; type: string }> = [];
+function scanMigrationColumns(
+  body: string,
+  bodyOffset: number,
+): Array<{ name: string; index: number; type: string; nullable?: boolean; defaultValue?: string; enumValues?: string[] }> {
+  const columns: Array<{ name: string; index: number; type: string; nullable?: boolean; defaultValue?: string; enumValues?: string[] }> = [];
   const columnMethods =
     "bigInteger|binary|boolean|char|date|dateTime|dateTimeTz|decimal|double|enum|float|foreignId|integer|ipAddress|json|jsonb|longText|macAddress|mediumInteger|mediumText|morphs|nullableMorphs|rememberToken|set|smallInteger|string|text|time|timeTz|timestamp|timestampTz|tinyInteger|ulid|uuid|year";
-  const namedColumnRegex = new RegExp(`\\$table->(?:${columnMethods})\\(\\s*['"]([A-Za-z0-9_]+)['"]`, "g");
+  const namedColumnRegex = new RegExp(`\\$table->(?:${columnMethods})\\(\\s*['"]([A-Za-z0-9_]+)['"][^;]*`, "g");
 
   for (const match of body.matchAll(namedColumnRegex)) {
     if (match[1] === undefined || match.index === undefined) {
@@ -1540,42 +2112,64 @@ function scanMigrationColumns(body: string, bodyOffset: number): Array<{ name: s
     const methodCall = match[0];
     const methodName = /\$table->([A-Za-z_][A-Za-z0-9_]*)/.exec(methodCall)?.[1];
     const baseIndex = bodyOffset + match.index + methodCall.lastIndexOf(match[1]);
+    const nullable = /->nullable\(\s*\)/.test(methodCall);
+    const defaultValue = /->default\(\s*([^)]+)\s*\)/.exec(methodCall)?.[1]?.trim();
+    const enumValues = extractMigrationEnumValues(methodCall);
 
     if (methodName === "morphs" || methodName === "nullableMorphs") {
-      columns.push({ name: `${match[1]}_id`, index: baseIndex, type: "unsignedBigInteger" });
-      columns.push({ name: `${match[1]}_type`, index: baseIndex, type: "string" });
+      columns.push({ name: `${match[1]}_id`, index: baseIndex, type: "unsignedBigInteger", nullable: methodName === "nullableMorphs" });
+      columns.push({ name: `${match[1]}_type`, index: baseIndex, type: "string", nullable: methodName === "nullableMorphs" });
       continue;
     }
 
-    columns.push({ name: match[1], index: baseIndex, type: methodName ?? "column" });
+    columns.push({
+      name: match[1],
+      index: baseIndex,
+      type: methodName ?? "column",
+      nullable,
+      defaultValue,
+      enumValues,
+    });
   }
 
   for (const match of body.matchAll(/\$table->id\(\s*\)/g)) {
     if (match.index !== undefined) {
-      columns.push({ name: "id", index: bodyOffset + match.index, type: "id" });
+      columns.push({ name: "id", index: bodyOffset + match.index, type: "id", nullable: false });
     }
   }
 
   for (const match of body.matchAll(/\$table->timestamps\(\s*\)/g)) {
     if (match.index !== undefined) {
-      columns.push({ name: "created_at", index: bodyOffset + match.index, type: "timestamp" });
-      columns.push({ name: "updated_at", index: bodyOffset + match.index, type: "timestamp" });
+      columns.push({ name: "created_at", index: bodyOffset + match.index, type: "timestamp", nullable: false });
+      columns.push({ name: "updated_at", index: bodyOffset + match.index, type: "timestamp", nullable: false });
     }
   }
 
   for (const match of body.matchAll(/\$table->softDeletes\(\s*\)/g)) {
     if (match.index !== undefined) {
-      columns.push({ name: "deleted_at", index: bodyOffset + match.index, type: "timestamp" });
+      columns.push({ name: "deleted_at", index: bodyOffset + match.index, type: "timestamp", nullable: true });
     }
   }
 
   for (const match of body.matchAll(/\$table->rememberToken\(\s*\)/g)) {
     if (match.index !== undefined) {
-      columns.push({ name: "remember_token", index: bodyOffset + match.index, type: "string" });
+      columns.push({ name: "remember_token", index: bodyOffset + match.index, type: "string", nullable: true });
     }
   }
 
   return columns;
+}
+
+function extractMigrationEnumValues(methodCall: string): string[] | undefined {
+  const valuesBlock = /->(?:enum|set)\(\s*['"][A-Za-z0-9_]+['"]\s*,\s*\[([^\]]*)\]\s*\)/.exec(methodCall)?.[1];
+  if (!valuesBlock) {
+    return undefined;
+  }
+
+  const values = [...valuesBlock.matchAll(/['"]([^'"]+)['"]/g)]
+    .map((match) => match[1])
+    .filter((value): value is string => Boolean(value));
+  return values.length > 0 ? values : undefined;
 }
 
 function scanPhpClassInfo(file: string, text: string): PhpClassInfo | undefined {
@@ -2063,12 +2657,16 @@ function resolveModelClass(className: string, namespace: string, uses: Map<strin
   return resolvePhpClassReference(className, namespace, uses);
 }
 
+function normalizeClassReference(reference: string): string {
+  return reference.replace(/^\\/, "").replace(/::class$/, "");
+}
+
 function resolvePhpClassReference(className: string, namespace: string, uses: Map<string, string>): string {
   const normalized = className.replace(/^\\/, "");
   if (normalized.includes("\\")) {
     return normalized;
   }
-  return uses.get(normalized) ?? `${namespace}\\${normalized}`;
+  return uses.get(normalized) ?? (namespace ? `${namespace}\\${normalized}` : normalized);
 }
 
 function resolveExtendsClass(className: string, namespace: string, uses: Map<string, string>): string {
@@ -2955,9 +3553,12 @@ function createItemFromLine(
 
 function createResponseFieldItem(field: ResponseFieldMatch, file: string, text: string, route: IndexedItem): IndexedItem {
   const key = field.path.join(".");
+  const source = field.source ?? offsetToSourceLocation(file, text, field.index);
   return {
-    ...createItem("response-field", key, file, text, field.index),
+    key,
     label: key,
+    kind: "response-field",
+    source,
     detail: `Laravel response: ${route.httpMethod ?? "ANY"} ${route.uri ?? route.key}`,
     uri: route.uri,
     httpMethod: route.httpMethod,
@@ -2970,6 +3571,8 @@ function createResponseFieldItem(field: ResponseFieldMatch, file: string, text: 
     responseControllerClass: route.controllerClass,
     responseControllerMethod: route.method,
     responseFieldPath: field.path,
+    responseSourceKind: field.responseSourceKind,
+    responseSourceClass: field.responseSourceClass,
   };
 }
 

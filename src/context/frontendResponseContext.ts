@@ -19,6 +19,22 @@ export type FrontendResponseCompletionContext =
       reason: "no-response-receiver" | "unmatched-request" | "unsupported-chain";
     };
 
+export type FrontendResponseFieldContext =
+  | {
+      kind: "response-field";
+      request: FrontendHttpRequestReference;
+      receiver: string;
+      path: string[];
+      field: string;
+      fieldPath: string[];
+      rangeStart: number;
+      rangeEnd: number;
+    }
+  | {
+      kind: "none";
+      reason: "no-response-receiver" | "unmatched-request" | "unsupported-chain";
+    };
+
 export function resolveFrontendResponseCompletionContext(text: string, offset: number): FrontendResponseCompletionContext {
   const boundedOffset = Math.max(0, Math.min(offset, text.length));
   const prefixText = text.slice(0, boundedOffset);
@@ -52,6 +68,50 @@ export function resolveFrontendResponseCompletionContext(text: string, offset: n
       receiver: chain.receiver,
       path: chain.parts.slice(1),
       prefix: chain.prefix,
+      rangeStart: chain.rangeStart,
+      rangeEnd: chain.rangeEnd,
+    };
+  }
+
+  return { kind: "none", reason: responseRequest ? "unsupported-chain" : "unmatched-request" };
+}
+
+export function resolveFrontendResponseFieldContext(text: string, offset: number): FrontendResponseFieldContext {
+  const boundedOffset = Math.max(0, Math.min(offset, text.length));
+  const chain = responsePropertyChainAtOffset(text, boundedOffset);
+  if (!chain) {
+    return { kind: "none", reason: "no-response-receiver" };
+  }
+
+  const lines = text.slice(0, boundedOffset).split(/\r?\n/);
+  const aliases = collectFrontendUrlAliases(lines);
+  const bindings = collectResponseBindings(text.split(/\r?\n/), aliases);
+
+  const responseRequest = bindings.responseVariables.get(chain.receiver);
+  if (responseRequest && chain.parts[1] === "data" && chain.activeIndex >= 2) {
+    const fieldPath = chain.parts.slice(2, chain.activeIndex + 1);
+    return {
+      kind: "response-field",
+      request: responseRequest,
+      receiver: chain.receiver,
+      path: fieldPath.slice(0, -1),
+      field: fieldPath[fieldPath.length - 1] ?? "",
+      fieldPath,
+      rangeStart: chain.rangeStart,
+      rangeEnd: chain.rangeEnd,
+    };
+  }
+
+  const dataRequest = bindings.dataVariables.get(chain.receiver);
+  if (dataRequest && chain.activeIndex >= 1) {
+    const fieldPath = chain.parts.slice(1, chain.activeIndex + 1);
+    return {
+      kind: "response-field",
+      request: dataRequest,
+      receiver: chain.receiver,
+      path: fieldPath.slice(0, -1),
+      field: fieldPath[fieldPath.length - 1] ?? "",
+      fieldPath,
       rangeStart: chain.rangeStart,
       rangeEnd: chain.rangeEnd,
     };
@@ -120,6 +180,52 @@ function responsePropertyChainAtPrefix(
     rangeStart: offset - currentPrefix.length,
     rangeEnd: offset,
   };
+}
+
+function responsePropertyChainAtOffset(
+  text: string,
+  offset: number,
+): { receiver: string; parts: string[]; activeIndex: number; rangeStart: number; rangeEnd: number } | undefined {
+  if (!/[A-Za-z0-9_$]/.test(text[offset] ?? "") && !/[A-Za-z0-9_$]/.test(text[offset - 1] ?? "")) {
+    return undefined;
+  }
+
+  let start = offset;
+  let end = offset;
+
+  while (start > 0 && /[A-Za-z0-9_$.]/.test(text[start - 1] ?? "")) {
+    start -= 1;
+  }
+  while (end < text.length && /[A-Za-z0-9_$.]/.test(text[end] ?? "")) {
+    end += 1;
+  }
+
+  const chainText = text.slice(start, end);
+  if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(chainText)) {
+    return undefined;
+  }
+
+  const relativeOffset = Math.max(0, Math.min(offset - start, chainText.length - 1));
+  const parts = chainText.split(".");
+  let cursor = 0;
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index] ?? "";
+    const partStart = cursor;
+    const partEnd = partStart + part.length;
+    if (relativeOffset <= partEnd) {
+      return {
+        receiver: parts[0] ?? "",
+        parts,
+        activeIndex: index,
+        rangeStart: start + partStart,
+        rangeEnd: start + partEnd,
+      };
+    }
+    cursor = partEnd + 1;
+  }
+
+  return undefined;
 }
 
 function responseVariableFromRequestLine(line: string): string | undefined {

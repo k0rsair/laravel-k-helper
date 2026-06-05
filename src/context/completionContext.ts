@@ -105,9 +105,21 @@ export function resolveStringContext(linePrefix: string, languageId: string): St
   if (filamentResourceContext) {
     return filamentResourceContext;
   }
+  const filamentFieldContext = resolveFilamentFieldContext(linePrefix);
+  if (filamentFieldContext) {
+    return filamentFieldContext;
+  }
+  const filamentActionContext = resolveFilamentActionContext(linePrefix);
+  if (filamentActionContext) {
+    return filamentActionContext;
+  }
   const novaResourceContext = resolveNovaResourceContext(linePrefix);
   if (novaResourceContext) {
     return novaResourceContext;
+  }
+  const inertiaPropContext = resolveInertiaPropContext(linePrefix);
+  if (inertiaPropContext) {
+    return inertiaPropContext;
   }
 
   const contexts = languageId === "blade" ? BLADE_HELPER_CONTEXTS : PHP_HELPER_CONTEXTS;
@@ -498,6 +510,52 @@ export function resolveNovaResourceContext(linePrefix: string): StringContext | 
   };
 }
 
+export function resolveFilamentFieldContext(linePrefix: string): StringContext | undefined {
+  const match = /\b(?:TextInput|Textarea|Toggle|Checkbox|Select|DatePicker|TextColumn|IconColumn|BadgeColumn|ViewColumn)::make\(\s*['"]([^'"]*)$/.exec(linePrefix);
+  if (!match) {
+    return undefined;
+  }
+
+  const prefix = match[1] ?? "";
+  return {
+    kind: "filament-field",
+    prefix,
+    rangeStart: linePrefix.length - prefix.length,
+    rangeEnd: linePrefix.length,
+  };
+}
+
+export function resolveFilamentActionContext(linePrefix: string): StringContext | undefined {
+  const match = /\b(?:Action|BulkAction)::make\(\s*['"]([^'"]*)$/.exec(linePrefix);
+  if (!match) {
+    return undefined;
+  }
+
+  const prefix = match[1] ?? "";
+  return {
+    kind: "filament-action",
+    prefix,
+    rangeStart: linePrefix.length - prefix.length,
+    rangeEnd: linePrefix.length,
+  };
+}
+
+export function resolveInertiaPropContext(linePrefix: string): StringContext | undefined {
+  const match = /\$?page\.props\.([A-Za-z0-9_.]*)$/.exec(linePrefix);
+  if (!match) {
+    return undefined;
+  }
+
+  const parts = (match[1] ?? "").split(".");
+  return {
+    kind: "inertia-prop",
+    prefix: parts[parts.length - 1] ?? "",
+    rangeStart: linePrefix.length - (parts[parts.length - 1]?.length ?? 0),
+    rangeEnd: linePrefix.length,
+    relationPath: parts.slice(0, -1).filter(Boolean),
+  };
+}
+
 function splitRouteActionReference(value: string): { controllerClass?: string; methodPrefix: string } {
   const separator = value.lastIndexOf("@");
   if (separator < 0) {
@@ -540,6 +598,34 @@ export function resolveBladeComponentPrefix(linePrefix: string): { prefix: strin
   };
 }
 
+export function resolveBladeComponentAttributeContext(
+  linePrefix: string,
+): { componentName: string; prefix: string; start: number } | undefined {
+  const match = /<x-([A-Za-z0-9_.:-]+)\b[^>]*\s(?::)?([A-Za-z_][A-Za-z0-9_-]*)$/.exec(linePrefix);
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  const prefix = match[2] ?? "";
+  return {
+    componentName: match[1].replace(/-/g, "."),
+    prefix,
+    start: linePrefix.length - prefix.length,
+  };
+}
+
+export function resolveBladeComponentSlotPrefix(linePrefix: string): { prefix: string; start: number } | undefined {
+  const match = /<x-slot:([A-Za-z0-9_-]*)$/.exec(linePrefix);
+  if (!match) {
+    return undefined;
+  }
+
+  return {
+    prefix: match[1] ?? "",
+    start: linePrefix.length - (match[1]?.length ?? 0),
+  };
+}
+
 export function resolveLivewireComponentPrefix(linePrefix: string): { prefix: string; start: number } | undefined {
   const match = /<livewire:([A-Za-z0-9_.:-]*)$/.exec(linePrefix);
   if (!match) {
@@ -550,6 +636,34 @@ export function resolveLivewireComponentPrefix(linePrefix: string): { prefix: st
     prefix: match[1],
     start: linePrefix.length - match[1].length,
   };
+}
+
+export function resolveLivewireDirectiveContext(
+  linePrefix: string,
+): { kind: "property" | "action"; prefix: string; rangeStart: number; rangeEnd: number } | undefined {
+  const propertyMatch = /wire:(?:model|key)(?:\.[A-Za-z0-9_.:-]+)?=\s*['"]([^'"]*)$/.exec(linePrefix);
+  if (propertyMatch) {
+    const prefix = propertyMatch[1] ?? "";
+    return {
+      kind: "property",
+      prefix,
+      rangeStart: linePrefix.length - prefix.length,
+      rangeEnd: linePrefix.length,
+    };
+  }
+
+  const actionMatch = /wire:(?:click|submit|change|keydown|keyup)(?:\.[A-Za-z0-9_.:-]+)?=\s*['"]([^'"]*)$/.exec(linePrefix);
+  if (actionMatch) {
+    const prefix = actionMatch[1] ?? "";
+    return {
+      kind: "action",
+      prefix,
+      rangeStart: linePrefix.length - prefix.length,
+      rangeEnd: linePrefix.length,
+    };
+  }
+
+  return undefined;
 }
 
 export function extractQuotedStringAtOffset(line: string, offset: number): { value: string; start: number; end: number } | undefined {
